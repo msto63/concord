@@ -156,6 +156,49 @@ run_shell "$Csh" "$CshS" claim a kernel/src/embedded "parent" >/dev/null
 csh="$(run_shell "$Csh" "$CshS" claim a kernel/src/embedded/usbd "child" 2>&1)" || true
 echo "  ℹ shell (unfixed) result: ${csh}  ← double-lease the port prevents"
 
+# ───────────────────────── D. stale-reclaim parity (TTL) ─────────────────────────
+# A short TTL makes a holder go stale; another session must then be able to RECLAIM
+# its lease, and `status` must hide the stale session — crash-recovery semantics
+# shared by both tools. We drive the same timed sequence through each and compare the
+# reclaim stdout + the resulting semantic state.
+echo "── D. stale-reclaim parity (AIS_COORD_TTL=1) ──"
+stale_seq() {  # <run-fn> <coord-dir> <sync-file>  → prints the reclaim stdout line
+  local rf="$1" d="$2" s="$3"
+  AIS_COORD_TTL=1 "$rf" "$d" "$s" register a "first holder" >/dev/null
+  AIS_COORD_TTL=1 "$rf" "$d" "$s" claim a area/contended "mine" >/dev/null
+  sleep 2                                            # a's heartbeat ages past TTL
+  AIS_COORD_TTL=1 "$rf" "$d" "$s" register b "fresh challenger" >/dev/null
+  AIS_COORD_TTL=1 "$rf" "$d" "$s" claim b area/contended "reclaim" 2>&1
+}
+# D.1 — reclaim stdout parity (two dirs; robust: sleep 2 clears the TTL=1 holder).
+DS="$WORK/D-shell"; DSS="$WORK/D-shell-SYNC.md"
+DR="$WORK/D-rust";  DRS="$WORK/D-rust-SYNC.md"
+d_shell_out="$(stale_seq run_shell "$DS" "$DSS" | norm "$DS" "$DSS")"
+d_rust_out="$( stale_seq run_rust  "$DR" "$DRS" | norm "$DR" "$DRS")"
+if [ "$d_shell_out" = "$d_rust_out" ]; then
+  echo "  ✓ reclaim stdout identical: ${d_rust_out}"
+else
+  echo "  ✗ RECLAIM STDOUT MISMATCH:"; diff <(printf '%s\n' "$d_shell_out") <(printf '%s\n' "$d_rust_out") | sed 's/^/      /'; fail=1
+fi
+
+# D.2 — post-reclaim status, MUTUAL readability on ONE dir (avoids the cross-dir
+# timing race at a tight TTL boundary). Build a stale-then-reclaimed dir with RUST
+# (TTL=2, sleep 4 ⇒ 'a' unambiguously stale, 'b' unambiguously fresh), then have BOTH
+# tools read it back-to-back: each must hide stale 'a' and show 'b' holding the lease.
+DM="$WORK/D-mutual"; DMS="$WORK/D-mutual-SYNC.md"
+AIS_COORD_TTL=2 run_rust "$DM" "$DMS" register a "first holder" >/dev/null
+AIS_COORD_TTL=2 run_rust "$DM" "$DMS" claim a area/contended "mine" >/dev/null
+sleep 4
+AIS_COORD_TTL=2 run_rust "$DM" "$DMS" register b "fresh challenger" >/dev/null
+AIS_COORD_TTL=2 run_rust "$DM" "$DMS" claim b area/contended "reclaim" >/dev/null
+dm_shell="$(AIS_COORD_TTL=2 run_shell "$DM" "$DMS" status 2>&1 | norm "$DM" "$DMS")"
+dm_rust="$( AIS_COORD_TTL=2 run_rust  "$DM" "$DMS" status 2>&1 | norm "$DM" "$DMS")"
+if [ "$dm_shell" = "$dm_rust" ]; then
+  echo "  ✓ shell + Rust agree reading a rust-reclaimed dir (stale 'a' hidden, 'b' holds lease)"
+else
+  echo "  ✗ POST-RECLAIM STATUS MISMATCH:"; diff <(printf '%s\n' "$dm_shell") <(printf '%s\n' "$dm_rust") | sed 's/^/      /'; fail=1
+fi
+
 echo ""
 if [ "$fail" = 0 ]; then echo "PARITY: ALL PASS (semantic + mutual readability)"; else echo "PARITY: FAILURES (see above)"; fi
 exit $fail
