@@ -170,8 +170,8 @@ impl Store {
         let dir = self.paths.lease_dir(&slug::slug(area));
         match fs::create_dir(&dir) {
             Ok(()) => {
-                self.write_lease_fields(&dir, id, why)?;
-                self.append_log(id, &format!("claim: {area} ({why})"))?;
+                let fence = self.append_log(id, &format!("claim: {area} ({why})"))?;
+                self.write_lease_fields(&dir, id, area, why, fence)?;
                 Ok(ClaimOutcome::Claimed)
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -180,11 +180,9 @@ impl Store {
                     return Ok(ClaimOutcome::AlreadyYours);
                 }
                 if self.holder_stale(&holder)? {
-                    self.write_lease_fields(&dir, id, why)?;
-                    self.append_log(
-                        id,
-                        &format!("reclaim-stale: {area} (was {holder})"),
-                    )?;
+                    let fence =
+                        self.append_log(id, &format!("reclaim-stale: {area} (was {holder})"))?;
+                    self.write_lease_fields(&dir, id, area, why, fence)?;
                     Ok(ClaimOutcome::Reclaimed { previous: holder })
                 } else {
                     Ok(ClaimOutcome::Conflict { holder })
@@ -215,16 +213,21 @@ impl Store {
         let dir = &self.paths.merge_lock;
         match fs::create_dir(dir) {
             Ok(()) => {
+                let fence = self.append_log(id, &format!("merge-lock: {why}"))?;
                 self.write_atomic(&dir.join("holder"), &format!("{id}\n"))?;
                 self.write_atomic(&dir.join("since"), &format!("{}\n", self.now))?;
-                self.append_log(id, &format!("merge-lock: {why}"))?;
+                self.write_atomic(&dir.join("fence"), &format!("{fence}\n"))?;
                 Ok(MergeLockOutcome::Acquired)
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 let holder = read_trimmed(&dir.join("holder")).unwrap_or_else(|| "?".into());
                 if holder == id || self.holder_stale(&holder)? {
+                    // Reacquire does not log (shell parity), but still stamps a fresh
+                    // fence so the token stays monotonic.
+                    let fence = self.bump_fence()?;
                     self.write_atomic(&dir.join("holder"), &format!("{id}\n"))?;
                     self.write_atomic(&dir.join("since"), &format!("{}\n", self.now))?;
+                    self.write_atomic(&dir.join("fence"), &format!("{fence}\n"))?;
                     Ok(MergeLockOutcome::Reacquired)
                 } else {
                     Ok(MergeLockOutcome::Held { holder })
@@ -240,14 +243,16 @@ impl Store {
         if dir.exists() {
             fs::remove_dir_all(dir).map_err(|e| ConcordError::io(dir, e))?;
         }
-        self.append_log(id, "merge-unlock")
+        self.append_log(id, "merge-unlock")?;
+        Ok(())
     }
 
     // ──────────────────────────────── log / sync ────────────────────────────────
 
     /// `log <id> <event...>`: append a structured ledger record.
     pub fn log(&self, id: &str, event: &str) -> Result<()> {
-        self.append_log(id, event)
+        self.append_log(id, event)?;
+        Ok(())
     }
 
     /// `sync <id> <target> <topic> <body>`: append a prose-channel entry and log it.
@@ -286,11 +291,19 @@ impl Store {
             if self.holder_stale(&holder)? {
                 continue;
             }
+            // Original area from the additive `area` file; for a shell-created lease
+            // that lacks it, fall back to the slug (best effort).
+            let area = read_trimmed(&dir.join("area")).unwrap_or_else(|| area_slug.clone());
+            let fence = read_trimmed(&dir.join("fence"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
             leases.push(Lease {
                 area_slug,
+                area,
                 holder,
                 since: read_trimmed(&dir.join("since")).unwrap_or_default(),
                 why: read_trimmed(&dir.join("why")).unwrap_or_default(),
+                fence,
             });
         }
 
@@ -340,12 +353,14 @@ impl Store {
     }
 
     /// Find the first live, non-self lease whose area path-prefix-overlaps `area`.
-    /// Returns `(original-area, holder)`. The original area is recovered from the
-    /// lease's `why`-adjacent record — but since the shell stores only the slug, we
-    /// compare on the de-slugged segments by treating `_` boundaries conservatively:
-    /// we compare the requested area's slug-prefix against each held slug.
+    /// Returns `(reported-area, holder)`.
+    ///
+    /// Overlap is computed on the TRUE area strings when available (the Rust-written
+    /// `area` file), using `/`-segment prefix logic ([`slug::overlaps`]); for a
+    /// shell-created lease lacking an `area` file we fall back to `_`-segment overlap
+    /// on the slugs. An exact-same area is the shell's own `mkdir` collision (handled
+    /// on the claim path) — here we flag a PROPER parent/child overlap only.
     fn find_live_overlap(&self, id: &str, area: &str) -> Result<Option<(String, String)>> {
-        let want = slug::slug(area);
         for held_slug in sorted_entries(&self.paths.leases)? {
             let dir = self.paths.lease_dir(&held_slug);
             if !dir.is_dir() {
@@ -355,12 +370,16 @@ impl Store {
             if holder == id || self.holder_stale(&holder)? {
                 continue;
             }
-            // Compare on slugs (the only persisted form). `_`-segment prefix overlap
-            // is the slug-space analogue of `/`-segment overlap; exact-equal is the
-            // shell's own collision and handled by mkdir, so we look for proper
-            // parent/child here.
-            if slug_overlaps(&want, &held_slug) && want != held_slug {
-                return Ok(Some((held_slug, holder)));
+            let held_area = read_trimmed(&dir.join("area"));
+            let (overlaps, same) = match &held_area {
+                Some(ha) => (slug::overlaps(area, ha), ha == area),
+                None => {
+                    let want = slug::slug(area);
+                    (slug_overlaps(&want, &held_slug), want == held_slug)
+                }
+            };
+            if overlaps && !same {
+                return Ok(Some((held_area.unwrap_or(held_slug), holder)));
             }
         }
         Ok(None)
@@ -372,16 +391,66 @@ impl Store {
         self.write_atomic(&self.paths.session_file(&s.id), &s.to_body())
     }
 
-    fn write_lease_fields(&self, dir: &Path, holder: &str, why: &str) -> Result<()> {
+    fn write_lease_fields(
+        &self,
+        dir: &Path,
+        holder: &str,
+        area: &str,
+        why: &str,
+        fence: u64,
+    ) -> Result<()> {
         self.write_atomic(&dir.join("holder"), &format!("{holder}\n"))?;
         self.write_atomic(&dir.join("why"), &format!("{why}\n"))?;
         self.write_atomic(&dir.join("since"), &format!("{}\n", self.now))?;
+        // Additive files the shell ignores: the ORIGINAL area (fixes the lossy-slug
+        // conflation) and the fencing token (WP12 §1, design-for-M2).
+        self.write_atomic(&dir.join("area"), &format!("{area}\n"))?;
+        self.write_atomic(&dir.join("fence"), &format!("{fence}\n"))?;
         Ok(())
     }
 
-    fn append_log(&self, id: &str, event: &str) -> Result<()> {
-        let line = LedgerEntry::new(self.now, id, event).to_jsonl();
-        append_file(&self.paths.log, &line)
+    /// Append a ledger record under a freshly-bumped fence; returns that fence.
+    fn append_log(&self, id: &str, event: &str) -> Result<u64> {
+        let fence = self.bump_fence()?;
+        let line = LedgerEntry::new(self.now, fence, id, event).to_jsonl();
+        append_file(&self.paths.log, &line)?;
+        Ok(fence)
+    }
+
+    /// Atomically increment the global monotonic fence counter (`$COORD/fence`) and
+    /// return the new value, guarded by a short-lived `mkdir` mutex so concurrent
+    /// processes cannot lose an increment. M1 *records* the token; M2 *enforces* it
+    /// (rejecting actions that carry a stale fence after a reclaim — WP12 research §1).
+    fn bump_fence(&self) -> Result<u64> {
+        mkdirs(&self.paths.coord)?;
+        let lock = self.paths.coord.join(".fence.lock");
+        let fence_file = self.paths.coord.join("fence");
+        let mut acquired = false;
+        for _ in 0..500 {
+            match fs::create_dir(&lock) {
+                Ok(()) => {
+                    acquired = true;
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Err(e) => return Err(ConcordError::io(&lock, e)),
+            }
+        }
+        // ~1s of contention ⇒ assume the holder crashed; steal the stale mutex.
+        if !acquired {
+            let _ = fs::remove_dir_all(&lock);
+            let _ = fs::create_dir(&lock);
+        }
+        let cur = read_trimmed(&fence_file)
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        let next = cur + 1;
+        let res = self.write_atomic(&fence_file, &format!("{next}\n"));
+        let _ = fs::remove_dir_all(&lock);
+        res?;
+        Ok(next)
     }
 
     /// Write `content` to `path` atomically (temp file in the same dir + rename).

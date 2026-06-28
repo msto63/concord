@@ -89,14 +89,25 @@ impl Session {
 }
 
 /// A held lease over an area. The on-disk form is a directory whose mere existence
-/// is the lock (atomic `mkdir`), containing `holder`/`since`/`why` files.
+/// is the lock (atomic `mkdir`), containing `holder`/`since`/`why` files — and, in
+/// the Rust port, two additive files the shell ignores but that fix real bugs:
+///  - `area`  — the ORIGINAL (un-slugged) area string. The shell stores only the
+///    lossy slug (`tr '/ ' '__'`), which conflates `a/b` with `a b`; keeping the
+///    original lets overlap/identity checks reason about the true area.
+///  - `fence` — a monotonic fencing token (WP12 research §1). Recorded in M1
+///    (design-for); enforcement lands in M2 with the daemon + stale-reclaim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lease {
     /// The slugged area (on-disk directory name).
     pub area_slug: String,
+    /// The original area string (from the `area` file, or de-slugged for a
+    /// shell-created lease that has none).
+    pub area: String,
     pub holder: String,
     pub since: String,
     pub why: String,
+    /// Monotonic fencing token at acquisition (0 if absent, e.g. shell-created).
+    pub fence: u64,
 }
 
 /// The singleton merge gate. On disk: `merge.lock/` dir with `holder`/`since`.
@@ -108,37 +119,70 @@ pub struct MergeLock {
 
 /// One append-only ledger record in `intents.jsonl`.
 ///
-/// **Parity quirk preserved:** the shell builds the JSON with a bare `printf` and
-/// appends a trailing space inside the event field (`"event":"<text> "`). We
-/// reproduce that byte-for-byte in [`LedgerEntry::to_jsonl`] — the differential
-/// harness compares these lines, so the space must stay. Escaping of `"`/`\` is
-/// deliberately NOT done here (the shell does not escape either); hardening that is
-/// a tracked M1.x follow-up, kept out of the parity default.
+/// Two shell bugs are FIXED here (coordinator STEER: parity = semantic equivalence,
+/// not byte-identity — don't port the bugs):
+///  - **Proper JSON escaping.** The shell's bare `printf` emits invalid JSON the
+///    moment an event contains `"` or `\`; [`json_escape`] makes every line valid.
+///  - **No trailing-space quirk.** The shell appended a stray space inside the event
+///    field (`"event":"<text> "`); that was cosmetic, not a format contract, so it
+///    is dropped. The differential harness compares semantic state, not bytes.
+///
+/// A monotonic `fence` token is recorded (WP12 research §1, design-for-M2). The
+/// shell never reads `intents.jsonl`, so enriching it is safe for coexistence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerEntry {
     pub t: u64,
+    /// Monotonic fencing token for this action (0 if not assigned).
+    pub fence: u64,
     pub session: String,
-    /// The event text WITHOUT the trailing space (the writer adds it).
     pub event: String,
 }
 
 impl LedgerEntry {
-    pub fn new(t: u64, session: &str, event: &str) -> LedgerEntry {
+    pub fn new(t: u64, fence: u64, session: &str, event: &str) -> LedgerEntry {
         LedgerEntry {
             t,
+            fence,
             session: session.to_string(),
             event: event.to_string(),
         }
     }
 
-    /// The exact JSONL line, trailing `\n` included, byte-equal to the shell's
-    /// `printf '{"t":%s,"session":"%s","event":"%s"}\n' "$t" "$id" "$event "`.
+    /// A single valid JSONL line (trailing `\n` included). Field order is stable
+    /// (`t, fence, session, event`) for readable diffs; strings are JSON-escaped.
     pub fn to_jsonl(&self) -> String {
         format!(
-            "{{\"t\":{},\"session\":\"{}\",\"event\":\"{} \"}}\n",
-            self.t, self.session, self.event
+            "{{\"t\":{},\"fence\":{},\"session\":\"{}\",\"event\":\"{}\"}}\n",
+            self.t,
+            self.fence,
+            json_escape(&self.session),
+            json_escape(&self.event)
         )
     }
+}
+
+/// Escape a string for embedding in a JSON double-quoted value (RFC 8259): the two
+/// mandatory escapes `"` and `\`, the short forms for common control characters, and
+/// `\u00XX` for any remaining C0 control byte. Everything else (incl. UTF-8) passes
+/// through unchanged.
+pub fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -185,11 +229,25 @@ mod tests {
     }
 
     #[test]
-    fn ledger_line_keeps_trailing_space_quirk() {
-        let e = LedgerEntry::new(1782686531, "D", "release: x86-auditd-spawn");
+    fn ledger_line_is_valid_escaped_json_without_trailing_space() {
+        let e = LedgerEntry::new(1782686531, 7, "D", "release: x86-auditd-spawn");
         assert_eq!(
             e.to_jsonl(),
-            "{\"t\":1782686531,\"session\":\"D\",\"event\":\"release: x86-auditd-spawn \"}\n"
+            "{\"t\":1782686531,\"fence\":7,\"session\":\"D\",\"event\":\"release: x86-auditd-spawn\"}\n"
         );
+    }
+
+    #[test]
+    fn ledger_escapes_quotes_and_backslashes_and_controls() {
+        let e = LedgerEntry::new(1, 2, "x", "say \"hi\"\tpath C:\\a\nnext");
+        assert_eq!(
+            e.to_jsonl(),
+            "{\"t\":1,\"fence\":2,\"session\":\"x\",\"event\":\"say \\\"hi\\\"\\tpath C:\\\\a\\nnext\"}\n"
+        );
+    }
+
+    #[test]
+    fn json_escape_passes_utf8_through() {
+        assert_eq!(json_escape("→ hub — café"), "→ hub — café");
     }
 }

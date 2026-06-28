@@ -177,14 +177,14 @@ fn run(args: &[String]) -> Result<ExitCode> {
     }
 }
 
-/// Read the overlap policy from the environment. Default = `ParityShell` so the
-/// binary is a strict drop-in out of the box; set `CONCORD_STRICT_OVERLAP=1` to opt
-/// into path-prefix overlap rejection (WP12 §6). The default is the open question
-/// posted to `hub` (DESIGN: overlap-default) — flipping it is this one line.
+/// Read the overlap policy from the environment. Default = `RejectOverlap`: the
+/// path-prefix overlap check is the core WP12 §6 fix and the coordinator's STEER is
+/// "fix the bug in M1, don't replicate it". Set `CONCORD_STRICT_OVERLAP=0` to fall
+/// back to shell behaviour (no overlap detection) if ever needed for a pure drop-in.
 fn overlap_policy() -> OverlapPolicy {
     match std::env::var("CONCORD_STRICT_OVERLAP").ok().as_deref() {
-        Some("1") | Some("true") | Some("yes") => OverlapPolicy::RejectOverlap,
-        _ => OverlapPolicy::ParityShell,
+        Some("0") | Some("false") | Some("no") => OverlapPolicy::ParityShell,
+        _ => OverlapPolicy::RejectOverlap,
     }
 }
 
