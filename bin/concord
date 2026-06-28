@@ -40,7 +40,7 @@ is_coordinator() { [ "$(lc "$1")" = "$(lc "$CONCORD_COORDINATOR_ID")" ]; }
 
 # Each session runs in ITS OWN git worktree. STANDARD CONVENTION (project-agnostic):
 #   session <id>  ->  <repo-parent>/<repo-name>-<id-lowercase>
-# e.g. repo /Users/mikes/Projects/ais, session E -> /Users/mikes/Projects/ais-e ;
+# e.g. repo ~/code/myproj, session E -> ~/code/myproj-e ;
 # the bare repo dir is the canonical `main` checkout (no session lives there).
 # An optional override map ($COORD/hooks/worktree-map, "<path> <id>" lines) wins
 # if present — only for non-standard legacy layouts.

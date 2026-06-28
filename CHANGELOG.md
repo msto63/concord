@@ -17,6 +17,12 @@ for the enforced release process.
   and portable across projects. The `operator → coordinator → workers` delegation chain is unchanged;
   only the label is. The MIT copyright holder in `LICENSE`/`README` is intentionally left as-is
   (legal attribution, not an operational role).
+- **No wired absolute paths in the hooks.** `hooks/lib.sh` now derives the coordination dir from
+  its own location (`<coord>/hooks/` → `<coord>`) and the project repo + prose channel from the
+  naming convention (`<repo>-coord`, `<repo>-SESSION-SYNC.md`); `user-prompt.sh`/`session-start.sh`
+  consume those derived values instead of re-hardcoding the sync path. Env (`CONCORD_DIR/SYNC/PROJECT`,
+  legacy `AIS_*`) still wins for multi-project. Removes the last hardcoded `/Users/...` fallbacks from
+  the hook scripts — the `concord` CLI already derived paths this way.
 
 ## [0.2.0] - 2026-06-28
 ### Added

@@ -5,7 +5,7 @@
 # never misses a directive and always has fresh awareness. Fail-open, compact.
 . "$(dirname "$0")/lib.sh" 2>/dev/null || exit 0
 id=$(concord_id); [ -z "$id" ] && exit 0
-SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-/Users/mikes/Projects/ais-SESSION-SYNC.md}}"
+# COORD/SYNC/HOOKS/PROJECT come from lib.sh (derived from this hook's own location).
 state="$HOOKS/state"; mkdir -p "$state" 2>/dev/null
 seenf="$state/$id.seen"
 now=$(date +%s 2>/dev/null)

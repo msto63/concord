@@ -14,7 +14,7 @@ fi
 # Add a short context note so the model knows which Concord session it is.
 focus=$(concord_field "$id" focus)
 printf '[Concord] Du bist Session **%s**. Lies CLAUDE.md (Concord-Block) + den Prosa-Kanal ' "$id"
-printf '/Users/mikes/Projects/ais-SESSION-SYNC.md auf `### … → %s`-Direktiven. ' "$id"
+printf '%s auf `### … → %s`-Direktiven. ' "$SYNC" "$id"
 [ -n "$focus" ] && [ "$focus" != "(session started)" ] && printf 'Aktueller Fokus: %s. ' "$focus"
 printf 'Heartbeat/Registry werden jetzt automatisch per Hook gepflegt.\n'
 exit 0

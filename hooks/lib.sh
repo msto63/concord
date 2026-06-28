@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Concord hook common library. Sourced by the hook scripts. EVERYTHING here is
 # fail-open: any error must leave the session working normally.
-COORD="${CONCORD_DIR:-${AIS_COORD_DIR:-/Users/mikes/Projects/ais-coord}}"
-SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-/Users/mikes/Projects/ais-SESSION-SYNC.md}}"
+# Paths are DERIVED, not wired. This library lives in <coord>/hooks/, so the
+# coordination dir is its parent; the project repo + prose channel follow the
+# project-agnostic naming convention (<repo>-coord, <repo>-SESSION-SYNC.md, both
+# siblings of <repo>). Env (exported by `concord` at launch) wins; the location
+# derivation is the fallback for sessions not launched via concord.
+_libdir="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+COORD="${CONCORD_DIR:-${AIS_COORD_DIR:-$(dirname "$_libdir")}}"
 HOOKS="$COORD/hooks"
+PROJECT="${CONCORD_PROJECT:-${AIS_PROJECT_DIR:-${COORD%-coord}}}"
+SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-${COORD%-coord}-SESSION-SYNC.md}}"
 COORD_SH=""
-for c in /Users/mikes/Projects/ais/tools/coord.sh \
-         /Users/mikes/Projects/ais-k/tools/coord.sh; do
+for c in "$PROJECT/tools/coord.sh" "$PROJECT"-*/tools/coord.sh; do
   [ -x "$c" ] && { COORD_SH="$c"; break; }
 done
 
