@@ -10,6 +10,8 @@ releases are backward-compatible fixes. See [CONTRIBUTING](CONTRIBUTING.md#relea
 for the enforced release process.
 
 ## [Unreleased]
+
+## [0.2.1] - 2026-06-28
 ### Changed
 - **Human-director role is now name-abstract (`the operator`).** The coordinator kickoff and
   self-tick prompts (and README/guide/backlog) refer to the human who directs the fleet as
