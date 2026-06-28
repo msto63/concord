@@ -1,0 +1,9 @@
+# Concord shared-region patterns (one per line; repo-relative path prefixes).
+# The PreToolUse lease-guard blocks an Edit/Write to a file under one of these
+# ONLY IF a *different* active session holds the matching lease. Keep this list
+# TIGHT — only genuinely-hot files multiple sessions touch — to avoid false blocks.
+# A blank lease-state always ALLOWS (default-allow / fail-open).
+kernel/src/main.rs
+kernel/src/embedded
+lib/libstdrust
+docs/internal/BACKLOG.md

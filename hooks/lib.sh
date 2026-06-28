@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Concord hook common library. Sourced by the hook scripts. EVERYTHING here is
+# fail-open: any error must leave the session working normally.
+COORD="${CONCORD_DIR:-${AIS_COORD_DIR:-/Users/mikes/Projects/ais-coord}}"
+SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-/Users/mikes/Projects/ais-SESSION-SYNC.md}}"
+HOOKS="$COORD/hooks"
+COORD_SH=""
+for c in /Users/mikes/Projects/ais/tools/coord.sh \
+         /Users/mikes/Projects/ais-k/tools/coord.sh; do
+  [ -x "$c" ] && { COORD_SH="$c"; break; }
+done
+
+# Print the Concord session-id. Source of truth = the CONCORD_ID env var, set when
+# the session is launched (`CONCORD_ID=E claude …`). This is robust: it does NOT
+# depend on the working directory (all sessions here run from the main repo, so the
+# cwd does NOT identify the logical session). Empty if unset → hooks no-op (never
+# guess a wrong id). Optional fallback file lets a running session self-declare.
+concord_id() {
+  if [ -n "${CONCORD_ID:-}" ]; then printf '%s' "$CONCORD_ID"; return 0; fi
+  # Fallback: a marker a session may write to claim its id for this tty/pane.
+  local tty mk
+  tty=$(tty 2>/dev/null); mk="$COORD/idbind/$(printf '%s' "${tty:-none}" | tr '/ ' '__')"
+  [ -f "$mk" ] && printf '%s' "$(cat "$mk" 2>/dev/null)"
+}
+
+# ANSI colour for a session id (for the statusline).
+concord_colour() {
+  case "$1" in
+    A) printf '36' ;;  B) printf '34' ;;  C) printf '32' ;;
+    D) printf '35' ;;  E) printf '33' ;;  K) printf '90' ;;
+    *) printf '37' ;;
+  esac
+}
+
+# Slugify a path the way coord.sh does (/, space -> _).
+concord_slug() { printf '%s' "$1" | tr '/ ' '__'; }
+
+# Read a session field (focus|heartbeat|started) from the registry.
+concord_field() {  # <id> <field>
+  sed -n "s/^$2=//p" "$COORD/sessions/$1" 2>/dev/null | head -1
+}

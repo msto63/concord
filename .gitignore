@@ -1,0 +1,3 @@
+# Concord state lives OUTSIDE the repo (per-project <repo>-coord/ + <repo>-SESSION-SYNC.md)
+*.swp
+.DS_Store
