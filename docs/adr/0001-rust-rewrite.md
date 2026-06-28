@@ -40,6 +40,16 @@ Bonus: Concord is philosophically the same as `ais` — enforced coordination, l
 capabilities, accountability/provenance. Built properly in Rust it **dogfoods the `ais`
 vision at tool level** (north star: Concord as an `ais`-native service, M6).
 
+**Vision alignment (the deeper why).** Concord's primitives are a small-scale instance of
+the `ais` enforced vertical: a **lease is a capability** (scoped authority over a region),
+the **merge lock is an authority singleton**, the **ledger is the provenance/accountability
+trail**, and the **fencing token is what keeps a capability un-forgeable after reclaim** — a
+stalled holder cannot act on stale authority. So the port is more than portability: it is a
+faithful, *enforceable* rendering of the same guarantees `ais` makes at Ring 0 — which is
+what makes M6 (Concord-on-`ais`) a coherent north star, not a slogan. Where parity with the
+shell and the vision conflict, the vision wins; M1 already chose vision-mode defaults
+(RejectOverlap, correct escaping) rather than deferring them.
+
 **Prior art consulted** (full notes + sources in `WP12-RESEARCH.md`):
 - *Leases + TTL + stale-reclaim* are modelled by etcd (Grant/KeepAlive, attached keys
   auto-deleted when the keepalive stops), ZooKeeper (ephemeral znodes), and Consul
@@ -192,11 +202,14 @@ is frozen to `bin/legacy/`):
 incrementally, revert any time; at parity, freeze shell to `bin/legacy/`, binary becomes
 default; M2+ builds additively over the unchanged FS state.
 
-**Open questions for review.** (1) ADR language — English (chosen, matches public docs) vs
-German (matches WP12 notes); flip is cheap. (2) `cargo-dist` vs a plain `cargo build` CI
-matrix for a one-platform tool. (3) whether the fence counter should also span shell-issued
-actions during coexistence (currently counts Rust actions only — acceptable for design-for,
-the M2 daemon becomes the sole issuer).
+**Open questions (resolved in review).**
+- (1) ADR language — **RESOLVED: English**, matching the English public-doc layer
+  (README/MANUAL/ROADMAP/BACKLOG); a flip to German is cheap if the operator prefers.
+- (2) `cargo-dist` vs a plain `cargo build` CI matrix — **RESOLVED: deferred to M4**, outside
+  the M1+M2+M3 cut; re-evaluate there with a fresh check of cargo-dist's maintenance status.
+- (3) whether the fence counter should span shell-issued actions during coexistence —
+  **RESOLVED: Rust-only**. The M2 daemon becomes the sole fence issuer at the point
+  enforcement begins, so coexistence shell actions need not bump the counter.
 
 ## Sources
 
