@@ -30,9 +30,11 @@ filesystem, plus Claude Code hooks. Keep it that way.
 ## Release discipline
 
 Concord follows [Semantic Versioning](https://semver.org). `VERSION` is the **single source of
-truth**; `concord version` prints it; `CHANGELOG.md` documents every release. CI runs
-`scripts/check-version.sh` on every push and PR and **fails the build** if `VERSION`, the latest
-`CHANGELOG.md` entry, and `concord version` disagree — so the version can never silently drift.
+truth**; `concord version` prints it; `CHANGELOG.md` documents every release. Enforcement is
+**local, not cloud** — run `bash scripts/install-hooks.sh` once to install a **pre-push hook** that
+runs `scripts/check-version.sh` and **blocks the push** if `VERSION`, the latest `CHANGELOG.md`
+entry, and `concord version` disagree. So the version can never silently drift, with no CI service
+and no cost.
 
 **Every change that ships:**
 1. Add a bullet under `## [Unreleased]` in `CHANGELOG.md`.
@@ -42,14 +44,11 @@ truth**; `concord version` prints it; `CHANGELOG.md` documents every release. CI
 2. Move the `[Unreleased]` bullets under a new `## [X.Y.Z] - YYYY-MM-DD` heading.
 3. Write the new number into `VERSION`.
 4. `bash scripts/check-version.sh` must pass.
-5. Commit, then tag: `git tag vX.Y.Z && git push --tags`. CI re-checks that the tag equals
-   `v$VERSION`.
+5. Commit, then tag: `git tag vX.Y.Z && git push --tags`. The pre-push hook re-checks that the tag
+   equals `v$VERSION`.
 
-Recommended local guard — wire the check into a pre-push hook:
-```bash
-printf '#!/usr/bin/env bash\nexec bash scripts/check-version.sh\n' > .git/hooks/pre-push
-chmod +x .git/hooks/pre-push
-```
+The pre-push hook is installed once per clone with `bash scripts/install-hooks.sh` (git hooks live
+in `.git/`, which is not shared, so each clone installs its own).
 
 ## Scope
 

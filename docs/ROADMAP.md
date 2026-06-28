@@ -51,6 +51,15 @@ and without a server — and let Concord coordinate its own development (dogfood
   alternative (path translation + CRLF); a native PowerShell port is out of scope while WSL2 exists.
   Plus `.gitattributes` (LF) for safe Windows checkouts and a support matrix in the docs.
 
+- **§11 — Rust rewrite (decision pending).** *Should Concord be a single platform-independent Rust
+  binary instead of shell scripts?* **Likely yes**, long-term: it gives native macOS/Linux/**Windows**
+  support with no WSL2 and no BSD-vs-GNU shell fragility (so it **supersedes §10**), produces a single
+  installable artifact, and makes the richer roadmap items (typed MCP tools §7, the structured board
+  §6, the inbox protocol §9) far cleaner than shell. The shell version was the right way to *prototype*
+  — born inside `ais`, it proved the model fast. Migration is measured: keep the **file-based state
+  layout unchanged** so a Rust `concord` is a drop-in replacement that can coexist during transition;
+  hooks become binary subcommands; the version source moves to `Cargo.toml`. Tracked as Backlog WP12.
+
 ## Dogfooding
 
 Once multi-project support is solid: `concord-coord/` + `concord-SESSION-SYNC.md` + worktrees

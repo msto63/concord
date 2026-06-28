@@ -76,12 +76,27 @@ reconciled with [ROADMAP.md](ROADMAP.md) (the roadmap section each WP serves is 
 - [x] `VERSION` (single source of truth) starting at `0.1.0`; `concord version`
 - [x] `CHANGELOG.md` (Keep a Changelog + semver)
 - [x] `scripts/check-version.sh` (VERSION ↔ CHANGELOG ↔ `concord version` ↔ tag)
-- [x] CI workflow enforcing the check on every push/PR (`.github/workflows/ci.yml`)
+- [x] Local **pre-push hook** enforcing the check (`scripts/install-hooks.sh`) — no CI, no cost
 - [x] Release process documented (CONTRIBUTING) + standing rule (CLAUDE.md)
 - [x] Tag `v0.1.0`
 
-## WP11 — Cross-platform support (Linux, Windows 11) `[ ]` P2
-*macOS works today. Concretely needed for the other platforms:*
+## WP12 — Rust rewrite (platform-independent binary) `[ ]` P1 — DECISION PENDING
+*Proposed direction: replace the shell scripts with a single cross-platform Rust binary. If
+adopted, this **supersedes WP11** (no need to paper over BSD-vs-GNU shell differences — Rust's
+stdlib is portable) and gives native Windows support without WSL2.*
+- [ ] **Decide** shell-maintenance vs. Rust rewrite (see ROADMAP §11). Owner: mike.
+- [ ] Define the CLI surface (`concord` + the `coord` subcommands) and keep the **file-based state
+      layout unchanged**, so the binary is a drop-in replacement that can coexist with the scripts
+      during transition.
+- [ ] Hooks as binary subcommands (`concord hook session-start` etc.) — Claude Code invokes a
+      command, which can be the binary.
+- [ ] Version from `Cargo.toml` (`env!("CARGO_PKG_VERSION")`) becomes the source of truth;
+      `concord version` and the changelog discipline carry over.
+- [ ] Release prebuilt binaries (macOS/Linux/Windows) and/or `cargo install`.
+- [ ] Port incrementally with behaviour parity; retire the shell version once at parity.
+
+## WP11 — Cross-platform support via shell (Linux, Windows 11) `[ ]` P3 — likely SUPERSEDED by WP12
+*Only pursue if the Rust rewrite (WP12) is declined. macOS works today.*
 - [ ] Abstract OS-specific calls behind portable helpers — `date -r` (BSD) vs `date -d @` (GNU),
       `stat -f %m` (BSD) vs `stat -c %Y` (GNU). One change unlocks **Linux + WSL2 + Git Bash**.
 - [ ] Replace macOS `/opt/homebrew/bin` examples with a generic PATH dir (`/usr/local/bin`, `~/.local/bin`).

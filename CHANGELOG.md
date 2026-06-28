@@ -10,6 +10,9 @@ releases are backward-compatible fixes. See [CONTRIBUTING](CONTRIBUTING.md#relea
 for the enforced release process.
 
 ## [Unreleased]
+### Changed
+- Enforce version discipline with a **local pre-push hook** (`scripts/install-hooks.sh`) instead of
+  a GitHub Actions workflow — no cloud service, no cost. `scripts/check-version.sh` is unchanged.
 
 ## [0.1.0] - 2026-06-28
 ### Added
