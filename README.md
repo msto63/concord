@@ -3,6 +3,7 @@
 **File-based coordination for multi-session AI development teams.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
 
 Concord lets **several AI coding sessions** (e.g. [Claude Code](https://claude.com/claude-code))
 work the **same repository in parallel** without clobbering each other — no server, no

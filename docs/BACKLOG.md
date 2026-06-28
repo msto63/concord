@@ -34,8 +34,8 @@ reconciled with [ROADMAP.md](ROADMAP.md) (the roadmap section each WP serves is 
 - [x] English `docs/MANUAL.md` (full reference)
 - [x] English `docs/ROADMAP.md`, `docs/BACKLOG.md`
 - [x] Local `CLAUDE.md` (git-ignored project instructions)
-- [ ] `CONTRIBUTING.md`
-- [ ] Public GitHub repo (MIT) created + pushed
+- [x] `CONTRIBUTING.md`
+- [x] Public GitHub repo (MIT) created + pushed — https://github.com/msto63/concord
 - [ ] Screenshot / asciinema of `concord dash` for the README  `P3`
 
 ## WP4 — Multi-project support `[~]` P1 (→ §8)
@@ -71,3 +71,23 @@ reconciled with [ROADMAP.md](ROADMAP.md) (the roadmap section each WP serves is 
 ## WP9 — Concord MCP server `[ ]` P3 (→ §7)
 - [ ] Typed tools for register/claim/merge-lock/status/board
 - [ ] Feeds the board/dashboard
+
+## WP10 — Versioning & release discipline `[x]` (→ Done)
+- [x] `VERSION` (single source of truth) starting at `0.1.0`; `concord version`
+- [x] `CHANGELOG.md` (Keep a Changelog + semver)
+- [x] `scripts/check-version.sh` (VERSION ↔ CHANGELOG ↔ `concord version` ↔ tag)
+- [x] CI workflow enforcing the check on every push/PR (`.github/workflows/ci.yml`)
+- [x] Release process documented (CONTRIBUTING) + standing rule (CLAUDE.md)
+- [x] Tag `v0.1.0`
+
+## WP11 — Cross-platform support (Linux, Windows 11) `[ ]` P2
+*macOS works today. Concretely needed for the other platforms:*
+- [ ] Abstract OS-specific calls behind portable helpers — `date -r` (BSD) vs `date -d @` (GNU),
+      `stat -f %m` (BSD) vs `stat -c %Y` (GNU). One change unlocks **Linux + WSL2 + Git Bash**.
+- [ ] Replace macOS `/opt/homebrew/bin` examples with a generic PATH dir (`/usr/local/bin`, `~/.local/bin`).
+- [ ] `.gitattributes` forcing LF on all scripts (so a Windows checkout doesn't CRLF-break shebangs).
+- [ ] **Linux:** verify native run (bash + the helpers above).  `P2`
+- [ ] **Windows 11:** document + verify **WSL2** as the recommended path (= the Linux run, near-zero
+      extra work); note Git Bash as a fragile alternative (path/CRLF caveats).  `P2`
+- [ ] Support matrix in README + MANUAL (macOS ✓ · Linux ✓ · Windows via WSL2 ✓ · native PowerShell = out of scope).
+- [ ] (Out of scope) native PowerShell port — large rewrite, not worth it while WSL2 exists.  `P3`

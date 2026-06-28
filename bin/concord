@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# concord — Concord Mission Control (macOS).
-#   concord start <id>      open a new Terminal, launch a worker session done right
+# concord — Concord Mission Control.
+#   concord start <id>      launch a worker session in the CURRENT terminal, done right
 #                           (CONCORD_ID=<id> + full permissions + auto /loop self-tick)
 #   concord dash            live overview: who is active, lease, heartbeat, last prose post
 #   concord status          coord.sh status passthrough
 #   concord pause  <id>     set a pause flag (the session's tick should skip work while paused)
 #   concord resume <id>     clear the pause flag
 #   concord stop   <id>     ask a session (via the prose channel) to stop cleanly
+#   concord version         print the Concord version (from the VERSION file)
 #
 # This removes the onboarding friction: a fresh session always starts with the
 # right identity, the right permissions, and a self-tick — no manual setup.
 set -euo pipefail
+
+# Resolve this script's real path (it is usually symlinked onto PATH) to locate repo files.
+_src="${BASH_SOURCE[0]}"
+while [ -h "$_src" ]; do _d="$(cd -P "$(dirname "$_src")" && pwd)"; _src="$(readlink "$_src")"; case "$_src" in /*) ;; *) _src="$_d/$_src";; esac; done
+CONCORD_HOME="$(cd -P "$(dirname "$_src")/.." && pwd)"
+CONCORD_VERSION="$(cat "$CONCORD_HOME/VERSION" 2>/dev/null || echo unknown)"
+case "${1:-}" in version|--version|-v) echo "concord $CONCORD_VERSION"; exit 0 ;; esac
 
 # Permission level for spawned worker sessions. Default = full access
 # (--dangerously-skip-permissions) so workers can git/build/qemu without gates —

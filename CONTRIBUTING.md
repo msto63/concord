@@ -27,6 +27,30 @@ filesystem, plus Claude Code hooks. Keep it that way.
   `bash` is old; avoid GNU-only flags).
 - Comment the *why*, not the *what*.
 
+## Release discipline
+
+Concord follows [Semantic Versioning](https://semver.org). `VERSION` is the **single source of
+truth**; `concord version` prints it; `CHANGELOG.md` documents every release. CI runs
+`scripts/check-version.sh` on every push and PR and **fails the build** if `VERSION`, the latest
+`CHANGELOG.md` entry, and `concord version` disagree — so the version can never silently drift.
+
+**Every change that ships:**
+1. Add a bullet under `## [Unreleased]` in `CHANGELOG.md`.
+
+**Every release:**
+1. Decide the bump (while `0.y.z`: MINOR may break; PATCH is fixes only).
+2. Move the `[Unreleased]` bullets under a new `## [X.Y.Z] - YYYY-MM-DD` heading.
+3. Write the new number into `VERSION`.
+4. `bash scripts/check-version.sh` must pass.
+5. Commit, then tag: `git tag vX.Y.Z && git push --tags`. CI re-checks that the tag equals
+   `v$VERSION`.
+
+Recommended local guard — wire the check into a pre-push hook:
+```bash
+printf '#!/usr/bin/env bash\nexec bash scripts/check-version.sh\n' > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
 ## Scope
 
 Bug fixes, portability improvements, documentation, and roadmap items (see

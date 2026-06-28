@@ -44,6 +44,13 @@ and without a server — and let Concord coordinate its own development (dogfood
   - **Keep a human log** — a readable prose/audit log remains for the human and coordinator; the
     *agents* talk over the compact structured queue. (`coord.sh sync` is the first step toward this.)
 
+- **§10 — Cross-platform support.** macOS works today; Linux and Windows 11 are planned (Backlog
+  WP11). The only real code dependency is a handful of BSD-vs-GNU differences (`date -r` vs
+  `date -d @`, `stat -f` vs `stat -c`); abstracting those behind portable helpers unlocks **Linux**
+  natively and **Windows 11 via WSL2** (which *is* Linux) in one step. Git Bash is a fragile
+  alternative (path translation + CRLF); a native PowerShell port is out of scope while WSL2 exists.
+  Plus `.gitattributes` (LF) for safe Windows checkouts and a support matrix in the docs.
+
 ## Dogfooding
 
 Once multi-project support is solid: `concord-coord/` + `concord-SESSION-SYNC.md` + worktrees
