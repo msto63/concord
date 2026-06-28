@@ -84,7 +84,7 @@ reconciled with [ROADMAP.md](ROADMAP.md) (the roadmap section each WP serves is 
 *Proposed direction: replace the shell scripts with a single cross-platform Rust binary. If
 adopted, this **supersedes WP11** (no need to paper over BSD-vs-GNU shell differences — Rust's
 stdlib is portable) and gives native Windows support without WSL2.*
-- [ ] **Decide** shell-maintenance vs. Rust rewrite (see ROADMAP §11). Owner: mike.
+- [ ] **Decide** shell-maintenance vs. Rust rewrite (see ROADMAP §11). Owner: operator.
 - [ ] Define the CLI surface (`concord` + the `coord` subcommands) and keep the **file-based state
       layout unchanged**, so the binary is a drop-in replacement that can coexist with the scripts
       during transition.

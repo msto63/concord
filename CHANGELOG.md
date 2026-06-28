@@ -10,6 +10,13 @@ releases are backward-compatible fixes. See [CONTRIBUTING](CONTRIBUTING.md#relea
 for the enforced release process.
 
 ## [Unreleased]
+### Changed
+- **Human-director role is now name-abstract (`the operator`).** The coordinator kickoff and
+  self-tick prompts (and README/guide/backlog) refer to the human who directs the fleet as
+  "the operator" instead of a hardcoded personal name — keeping Concord's prompts identity-neutral
+  and portable across projects. The `operator → coordinator → workers` delegation chain is unchanged;
+  only the label is. The MIT copyright holder in `LICENSE`/`README` is intentionally left as-is
+  (legal attribution, not an operational role).
 
 ## [0.2.0] - 2026-06-28
 ### Added

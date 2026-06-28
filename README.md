@@ -27,7 +27,7 @@ So sessions silently drift apart, duplicate work, or go dark.
 - **Claude Code hooks** automate the discipline: window identity, auto-register/heartbeat,
   status injection, and lease/merge enforcement — so sessions stay self-driven, not dormant.
 
-A human ("mike") talks to the coordinator; the coordinator dispatches the workers.
+A human (the operator) talks to the coordinator; the coordinator dispatches the workers.
 
 ## Quick start
 
