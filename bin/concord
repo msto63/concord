@@ -32,6 +32,12 @@ SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-$(dirname "$PROJECT")/$(basename "$PROJEC
 COORD_SH="$PROJECT/tools/coord.sh"
 mkdir -p "$COORD/paused" 2>/dev/null || true
 
+# Which session id is the coordinator/steward (gets the coordinator kickoff, not the
+# worker kickoff). Case-insensitive (hub == HUB). Override via env if you rename the role.
+CONCORD_COORDINATOR_ID="${CONCORD_COORDINATOR_ID:-hub}"
+lc() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }            # lowercase (for case-insensitive id compares)
+is_coordinator() { [ "$(lc "$1")" = "$(lc "$CONCORD_COORDINATOR_ID")" ]; }
+
 # Each session runs in ITS OWN git worktree. STANDARD CONVENTION (project-agnostic):
 #   session <id>  ->  <repo-parent>/<repo-name>-<id-lowercase>
 # e.g. repo /Users/mikes/Projects/ais, session E -> /Users/mikes/Projects/ais-e ;
@@ -46,19 +52,38 @@ worktree_for() {  # <id>
   printf '%s/%s-%s' "$parent" "$base" "$(printf '%s' "$id" | tr 'A-Z' 'a-z')"
 }
 
-# The recurring worker self-tick (set up via /loop). Kept generic — the session
-# learns its own id from the injected [Concord] hook context (CONCORD_ID).
-worker_loop_prompt() {
-cat <<'LOOP'
-12m Concord-Worker-Tick: 1) tools/coord.sh heartbeat <deine-id> (deine id steht im injizierten [Concord]-Kontext). 2) STARTSCHUSS-GATE: Hast du von K noch KEIN '### K -> <deine-id> (GO: <auftrag>)' erhalten? -> halte READY: nur heartbeaten, KEINE Arbeit greifen, weiter pruefen. Erst NACH K's GO Arbeit aufnehmen. Pause-Flag (concord pause) -> ebenfalls nur heartbeaten. 3) (nach GO) lies neue ### …->/<id>/ALLE-Direktiven in /Users/mikes/Projects/ais-SESSION-SYNC.md (Read-Tool oder bash) und setze den GO-Auftrag fort; bei echten Design-Weichen erst ### <id> -> K (DESIGN: …) an K. 4) Lease vor geteilten Edits (tools/coord.sh claim), Merge NUR ueber K. 5) Posten: cat >> /Users/mikes/Projects/ais-SESSION-SYNC.md ODER (falls sandbox-blockiert) tools/coord.sh sync <id> <ziel> "<topic>" "<body>". 6) Fertig/blockiert -> sichtbar an K melden. Kein stilles Idlen, keine interaktiven Entscheidungs-Formulare.
+# The recurring worker self-tick (set up via /loop). Parameterised with the
+# coordinator id and the prose channel so the wording matches the actual setup.
+worker_loop_prompt() {  # <coordinator-id> <sync-file>
+  local coord="$1" sync="$2"
+cat <<LOOP
+12m Concord worker tick: 1) tools/coord.sh heartbeat <your-id> (your id is in the injected [Concord] context). 2) STARTLINE GATE: if you have NOT yet received a '### ${coord} -> <your-id> (GO: <task>)' -> hold READY: only heartbeat, grab NO work, keep checking. Start work only AFTER the coordinator's GO. Pause flag (concord pause) -> also only heartbeat. 3) (after GO) read new ### …-> <id>/ALL directives in ${sync} (Read tool or bash) and continue the GO task; for real design forks first post ### <your-id> -> ${coord} (DESIGN: …) to the coordinator. 4) Lease before shared edits (tools/coord.sh claim); merge ONLY via the coordinator. 5) Post: append to ${sync} (cat >>) OR (if sandbox-blocked) tools/coord.sh sync <id> <target> "<topic>" "<body>". 6) Done/blocked -> report visibly to the coordinator. No silent idling, no interactive decision prompts.
 LOOP
 }
 
-# The initial kickoff message (sets up the loop + takes the pick).
-kickoff_prompt() {
-  local id="$1"
-  printf 'Du bist Concord-Worker-Session %s. Lies CLAUDE.md (Concord-Block). Richte JETZT deinen Self-Tick ein, indem du genau dieses Kommando ausfuehrst:\n/loop %s\nDann MELDE DICH ZUR ARBEIT bei K und WARTE auf den Startschuss: poste  ### %s -> K (READY: <dein-terrain>, warte auf GO) . Nimm KEINE Arbeit auf, bis K dir  ### K -> %s (GO: <auftrag>)  gepostet hat — bis dahin nur heartbeaten + READY halten.' \
-    "$id" "$(worker_loop_prompt)" "$id" "$id"
+# The initial worker kickoff message. ALWAYS ends by announcing presence to the
+# coordinator (READY), so the coordinator reliably knows the session is up.
+kickoff_prompt() {  # <id> <coordinator-id> <sync-file>
+  local id="$1" coord="$2" sync="$3"
+  printf 'You are Concord worker session %s. Read CLAUDE.md (Concord block). Set up your self-tick NOW by running exactly this command:\n/loop %s\nThen, EVERY time right after running this, announce yourself to the coordinator (session %s) and WAIT for the start signal: post  ### %s -> %s (READY: <your-terrain>, waiting for GO) . Always do this even if you have nothing to report yet, so the coordinator knows you are present. Grab NO work until the coordinator posts  ### %s -> %s (GO: <task>)  — until then only heartbeat + hold READY.' \
+    "$id" "$(worker_loop_prompt "$coord" "$sync")" "$coord" "$id" "$coord" "$coord" "$id"
+}
+
+# The recurring COORDINATOR self-tick. The coordinator is a neutral steward, NOT a
+# worker: it never waits for a GO and never takes a code terrain — it dispatches them.
+coordinator_loop_prompt() {  # <coordinator-id> <sync-file>
+  local coord="$1" sync="$2"
+cat <<LOOP
+25m Concord coordinator tick: 1) tools/coord.sh heartbeat <your-id> (id in the injected [Concord] context; usually kept by the hook). 2) You are the COORDINATOR/steward, NOT a worker — you wait for NO GO and grab NO code terrain. 3) Read new ### …-> <id>/ALL directives in ${sync} + tools/coord.sh status; acknowledge open READY/ACK/STATUS/DESIGN from workers so each one knows you are present. 4) MUSTER MODE: hold GOs until mike says "GO free"; then roll out the dispatch plan (### ${coord} -> <id> (GO: <task>)). 5) Arbitrate merges neutrally via merge-lock (standing mike delegation for commits/PRs/merges); actively drive utilization and progress of all sessions. 6) Escalate real direction questions to mike via the coordinator session; interactive decision prompts are coordinator-only. Channel hygiene: terse ### <id> -> <target> entries; record consequential decisions via tools/coord.sh log.
+LOOP
+}
+
+# The COORDINATOR kickoff message — distinct from the worker kickoff: no READY/GO-wait,
+# no code terrain; it takes up coordination immediately.
+coordinator_kickoff_prompt() {  # <id> <sync-file>
+  local id="$1" sync="$2"
+  printf 'You are Concord coordinator session %s (neutral steward, NOT a worker). Read CLAUDE.md (Concord block) + the HANDOFF and any open ### … -> %s directives in %s. You wait for NO GO and take NO code terrain. Set up your coordinator self-tick NOW by running exactly this command:\n/loop %s\nThen take up coordination: assess the situation (tools/coord.sh status + prose channel), acknowledge open READY/STATUS so every worker knows you are present, in MUSTER MODE hold the GOs until mike says "GO free" and then roll out the dispatch plan (### %s -> <id> (GO: <task>)). You are the single voice mike->%s->sessions: assign, sequence on the vision critical path, arbitrate ownership/merges (merge-lock). Escalate real direction questions to mike; interactive prompts are yours only.' \
+    "$id" "$id" "$sync" "$(coordinator_loop_prompt "$id" "$sync")" "$id" "$id"
 }
 
 cmd="${1:-dash}"; shift || true
@@ -67,9 +92,14 @@ case "$cmd" in
     id="${1:?usage: concord start <id>}"
     wt=$(worktree_for "$id")
     [ -d "$wt" ] || { echo "WARN: Worktree '$wt' für $id existiert nicht — nutze $PROJECT"; wt="$PROJECT"; }
-    pf="$COORD/.start-prompt-$id.txt"; kickoff_prompt "$id" > "$pf"
+    pf="$COORD/.start-prompt-$id.txt"
+    if is_coordinator "$id"; then
+      coordinator_kickoff_prompt "$id" "$SYNC" > "$pf"; role="coordinator · takes up coordination directly (no GO wait)"
+    else
+      kickoff_prompt "$id" "$CONCORD_COORDINATOR_ID" "$SYNC" > "$pf"; role="worker · announces READY, waits for the coordinator's GO"
+    fi
     "$COORD_SH" log "$id" "concord-start (current terminal)" >/dev/null 2>&1 || true
-    echo "▶ Session $id in DIESEM Terminal · Worktree: $wt · CONCORD_ID=$id · volle Rechte · meldet sich READY, wartet auf K's GO."
+    echo "▶ Session $id in DIESEM Terminal · Worktree: $wt · CONCORD_ID=$id · volle Rechte · $role."
     cd "$wt" || { echo "cd '$wt' fehlgeschlagen"; exit 1; }
     export CONCORD_ID="$id" CONCORD_DIR="$COORD" CONCORD_SYNC="$SYNC" CONCORD_PROJECT="$PROJECT"
     exec claude $CONCORD_CLAUDE_FLAGS "$(cat "$pf")"   # ersetzt diese Shell durch die Session — kein neues Fenster
@@ -79,8 +109,12 @@ case "$cmd" in
     "$COORD_SH" status 2>/dev/null
     echo ""
     echo "── Letzter Prosa-Post je Session ──"
-    for s in A B C D E K; do
-      last=$(grep -E "^### $s " "$SYNC" 2>/dev/null | tail -1)
+    # Session-Liste aus der Registry ableiten (jede ID, egal welche Schreibweise),
+    # statt einer hartkodierten Liste. Matching ist case-insensitiv (grep -i).
+    for f in "$COORD"/sessions/*; do
+      [ -e "$f" ] || break
+      s=$(basename "$f")
+      last=$(grep -iE "^### $s " "$SYNC" 2>/dev/null | tail -1)
       pz=""; [ -f "$COORD/paused/$s" ] && pz=" [PAUSED]"
       [ -n "$last" ] && printf '  %s%s\n' "$last" "$pz"
     done

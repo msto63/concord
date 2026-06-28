@@ -10,7 +10,24 @@ releases are backward-compatible fixes. See [CONTRIBUTING](CONTRIBUTING.md#relea
 for the enforced release process.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-06-28
+### Added
+- **Distinct coordinator role.** `concord start` now gives the coordinator its own kickoff and
+  self-tick (a neutral steward, not a worker — it never waits for a GO and takes no code terrain)
+  instead of the worker prompt. The coordinator id is configurable via `CONCORD_COORDINATOR_ID`
+  (default `hub`) and matched case-insensitively (`is_coordinator`).
+- Worker kickoff now **always announces presence** to the coordinator — it posts READY right after
+  setup, even with nothing to report yet — so the coordinator reliably knows which sessions are up.
+
 ### Changed
+- **Case-insensitive session ids** everywhere ids are compared: the directive matcher
+  (`### … → K` reaches `k` and vice versa, including the coordinator), the statusline colour map,
+  and `concord dash` (now derives the session list from the registry instead of a hardcoded list).
+- Worker and coordinator prompts rewritten in **English** and parameterized on the coordinator id
+  and the prose-channel path, so the wording always matches the actual setup.
+- Session names may be any single token (letters/digits/`-`/`_`, case-insensitive); `alle` (the
+  broadcast target) and the coordinator name are reserved.
 - Enforce version discipline with a **local pre-push hook** (`scripts/install-hooks.sh`) instead of
   a GitHub Actions workflow — no cloud service, no cost. `scripts/check-version.sh` is unchanged.
 
@@ -30,5 +47,6 @@ for the enforced release process.
   `scripts/check-version.sh`, and a CI workflow that enforces version discipline on every push/PR.
 - MIT license.
 
-[Unreleased]: https://github.com/msto63/concord/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/msto63/concord/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/msto63/concord/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/msto63/concord/releases/tag/v0.1.0

@@ -23,9 +23,9 @@ concord_id() {
   [ -f "$mk" ] && printf '%s' "$(cat "$mk" 2>/dev/null)"
 }
 
-# ANSI colour for a session id (for the statusline).
+# ANSI colour for a session id (for the statusline). Case-insensitive (K == k).
 concord_colour() {
-  case "$1" in
+  case "$(printf '%s' "$1" | tr 'a-z' 'A-Z')" in
     A) printf '36' ;;  B) printf '34' ;;  C) printf '32' ;;
     D) printf '35' ;;  E) printf '33' ;;  K) printf '90' ;;
     *) printf '37' ;;

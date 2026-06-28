@@ -30,13 +30,15 @@ if [ -f "$SYNC" ]; then
   if [ -n "$total" ] && [ "$total" -gt "${last:-0}" ]; then
     newdir=$(sed -n "$((last+1)),${total}p" "$SYNC" 2>/dev/null | python3 -c '
 import sys
-mid=sys.argv[1]
+# Case-insensitive id match: "### … → K" reaches session "k" and vice versa, so a
+# session works under either spelling of its id (incl. the coordinator K/k).
+mid=sys.argv[1].lower()
 for ln in sys.stdin:
     s=ln.rstrip("\n")
     if not s.startswith("###") or "→" not in s: continue
     tgt=s.split("→",1)[1].split("(",1)[0]
-    toks=tgt.replace("+"," ").replace(","," ").split()
-    if mid in toks or "ALLE" in toks: print(s)
+    toks=[t.lower() for t in tgt.replace("+"," ").replace(","," ").split()]
+    if mid in toks or "alle" in toks: print(s)
 ' "$id" 2>/dev/null)
     printf '%s' "$total" > "$seenf" 2>/dev/null
   fi
