@@ -1,0 +1,15 @@
+[package]
+name = "concord"
+description = "Concord CLI — drop-in multi-session coordination (Rust port of bin/coord.sh)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "concord"
+path = "src/main.rs"
+
+[dependencies]
+concord-core = { path = "../concord-core" }
