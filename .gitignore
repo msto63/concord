@@ -1,3 +1,14 @@
-# Concord state lives OUTSIDE the repo (per-project <repo>-coord/ + <repo>-SESSION-SYNC.md)
-*.swp
+# Local management files — not part of the public project
+CLAUDE.md
+AGENTS.md
+.claude/
+
+# Concord runtime state lives OUTSIDE the repo (per project: <repo>-coord/,
+# <repo>-SESSION-SYNC.md). Never commit coordination state or session logs.
+*-coord/
+*-SESSION-SYNC.md
+
+# OS / editor noise
 .DS_Store
+*.swp
+*~
