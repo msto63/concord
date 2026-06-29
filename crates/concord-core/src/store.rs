@@ -57,6 +57,35 @@ pub enum ClaimOutcome {
 pub enum ReleaseOutcome {
     Released,
     NoLease,
+    /// Refused: the lease is held by someone else — the shell would blindly delete
+    /// it; the typed core enforces ownership (ADR: no release of a foreign lease).
+    NotYours { holder: String },
+    /// Refused: caller holds it by name, but the presented fence is stale — a reclaim
+    /// advanced the lease's fence since the caller acquired it (fencing Floor).
+    FenceStale { current: u64 },
+}
+
+/// Result of a `merge-unlock`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeUnlockOutcome {
+    Released,
+    NotHeld,
+    /// Refused: the merge lock is held by someone else.
+    NotYours { holder: String },
+}
+
+/// Whether a caller still legitimately holds a lease — the fence-aware self-check a
+/// session runs after waking from a pause, before acting on its authority (Floor).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HoldStatus {
+    /// The caller holds it, at this fence.
+    Held { fence: u64 },
+    /// Held by another live session.
+    HeldByOther { holder: String },
+    /// A lease exists but its holder is stale (reclaimable).
+    Stale { holder: String },
+    /// No lease on this area.
+    Vacant,
 }
 
 /// Result of a `merge-lock`.
@@ -192,16 +221,63 @@ impl Store {
         }
     }
 
-    /// `release <id> <area>`: remove the lease dir. `id` is recorded in the log; the
-    /// outcome distinguishes "there was no lease" from a real release.
-    pub fn release(&self, id: &str, area: &str) -> Result<ReleaseOutcome> {
+    /// `release <id> <area>`: remove the lease dir — but only if `id` actually holds
+    /// it (ownership enforcement), and, when `expected_fence` is given, only if the
+    /// lease still carries that fence (the fencing Floor: a reclaim that advanced the
+    /// fence makes the caller's authority stale, so its release is refused rather than
+    /// clobbering the new holder).
+    ///
+    /// FENCING FLOOR — residual TOCTOU window: this check-then-remove is not a single
+    /// atomic step on a plain filesystem, so a reclaim landing in the gap between the
+    /// holder/fence read and the `remove_dir_all` is theoretically possible. It closes
+    /// the common reclaim-after-pause case (the woken stale holder is rejected); the
+    /// airtight version is the daemon-mediated path (M2.3), where check-and-apply runs
+    /// in the daemon's single thread. See ADR-0001 §Consequences.
+    pub fn release(
+        &self,
+        id: &str,
+        area: &str,
+        expected_fence: Option<u64>,
+    ) -> Result<ReleaseOutcome> {
         let dir = self.paths.lease_dir(&slug::slug(area));
-        if dir.is_dir() {
-            fs::remove_dir_all(&dir).map_err(|e| ConcordError::io(&dir, e))?;
-            self.append_log(id, &format!("release: {area}"))?;
-            Ok(ReleaseOutcome::Released)
+        if !dir.is_dir() {
+            return Ok(ReleaseOutcome::NoLease);
+        }
+        let holder = read_trimmed(&dir.join("holder")).unwrap_or_default();
+        if holder != id {
+            return Ok(ReleaseOutcome::NotYours { holder });
+        }
+        if let Some(want) = expected_fence {
+            let cur = read_trimmed(&dir.join("fence"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            if cur != want {
+                return Ok(ReleaseOutcome::FenceStale { current: cur });
+            }
+        }
+        fs::remove_dir_all(&dir).map_err(|e| ConcordError::io(&dir, e))?;
+        self.append_log(id, &format!("release: {area}"))?;
+        Ok(ReleaseOutcome::Released)
+    }
+
+    /// Fence-aware ownership check: does `id` still legitimately hold `area`? The
+    /// self-check a session runs after waking, before acting on its authority (Floor).
+    pub fn verify_hold(&self, id: &str, area: &str) -> Result<HoldStatus> {
+        let dir = self.paths.lease_dir(&slug::slug(area));
+        if !dir.is_dir() {
+            return Ok(HoldStatus::Vacant);
+        }
+        let holder = read_trimmed(&dir.join("holder")).unwrap_or_default();
+        if self.holder_stale(&holder)? {
+            return Ok(HoldStatus::Stale { holder });
+        }
+        if holder == id {
+            let fence = read_trimmed(&dir.join("fence"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            Ok(HoldStatus::Held { fence })
         } else {
-            Ok(ReleaseOutcome::NoLease)
+            Ok(HoldStatus::HeldByOther { holder })
         }
     }
 
@@ -237,14 +313,21 @@ impl Store {
         }
     }
 
-    /// `merge-unlock <id>`: release the merge gate and log it.
-    pub fn merge_unlock(&self, id: &str) -> Result<()> {
+    /// `merge-unlock <id>`: release the merge gate — but only if `id` holds it
+    /// (ownership enforcement; the shell would unlock unconditionally). Same residual
+    /// TOCTOU note as [`Store::release`]; the airtight path is daemon-mediated (M2.3).
+    pub fn merge_unlock(&self, id: &str) -> Result<MergeUnlockOutcome> {
         let dir = &self.paths.merge_lock;
-        if dir.exists() {
-            fs::remove_dir_all(dir).map_err(|e| ConcordError::io(dir, e))?;
+        if !dir.is_dir() {
+            return Ok(MergeUnlockOutcome::NotHeld);
         }
+        let holder = read_trimmed(&dir.join("holder")).unwrap_or_default();
+        if holder != id {
+            return Ok(MergeUnlockOutcome::NotYours { holder });
+        }
+        fs::remove_dir_all(dir).map_err(|e| ConcordError::io(dir, e))?;
         self.append_log(id, "merge-unlock")?;
-        Ok(())
+        Ok(MergeUnlockOutcome::Released)
     }
 
     // ──────────────────────────────── log / sync ────────────────────────────────
@@ -341,6 +424,9 @@ impl Store {
         Ok(Some(MergeLock {
             holder: read_trimmed(&dir.join("holder")).unwrap_or_else(|| "?".into()),
             since: read_trimmed(&dir.join("since")).unwrap_or_default(),
+            fence: read_trimmed(&dir.join("fence"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0),
         }))
     }
 

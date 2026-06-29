@@ -12,7 +12,9 @@
 //!    (see [`store::OverlapPolicy`]).
 
 pub mod clock;
+pub mod directive;
 pub mod error;
+pub mod ipc;
 pub mod model;
 pub mod paths;
 pub mod slug;
@@ -22,5 +24,6 @@ pub use error::{ConcordError, Result};
 pub use model::{LedgerEntry, Lease, MergeLock, Session};
 pub use paths::Paths;
 pub use store::{
-    ClaimOutcome, MergeLockOutcome, OverlapPolicy, ReleaseOutcome, StatusReport, Store,
+    ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
+    StatusReport, Store,
 };

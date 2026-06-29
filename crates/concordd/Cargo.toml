@@ -1,0 +1,19 @@
+[package]
+name = "concordd"
+description = "Concord push daemon (M2) — fs-watch + notify stream + fencing enforcement."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "concordd"
+path = "src/main.rs"
+
+[dependencies]
+concord-core = { path = "../concord-core" }
+notify = "8.2.0"
+notify-debouncer-full = "0.7.0"
+# notify + debouncer-full: research [4][5] — directory-level watch, debounced,
+# rename/move-aware (atomic-rename robust).

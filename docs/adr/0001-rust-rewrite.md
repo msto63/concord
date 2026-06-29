@@ -191,6 +191,18 @@ Coexistence risks Shell↔Rust drift — mitigated by the parity harness as a CI
 gate. `rmcp`'s API is still moving across majors, and `cargo-dist`'s maintenance status
 should be re-checked before adoption (both flagged open in `WP12-RESEARCH.md`).
 
+**Fencing has a residual TOCTOU window in the Floor tier (accepted).** The daemon-free
+Floor (M2.2) enforces fencing by a check-then-commit on the filesystem
+(`holder == me ∧ fence == expected`, then remove/mutate). On a plain filesystem these
+are not one atomic step, so a reclaim landing in the gap between the check and the commit
+is theoretically possible. This is **accepted**: the Floor closes the common
+reclaim-after-pause case (a woken stale holder is rejected, and a foreign holder can never
+release/unlock another's lease), and the **airtight** guarantee is the daemon-mediated
+Strong tier (M2.3), where check-and-apply runs in the daemon's single thread at the one
+serialization point. So fencing is "as strong as FS-authority allows when the daemon is
+down, airtight on the mediated path when it is up" — consistent with policy 4 rather than
+pretending the optional daemon gives a guarantee to direct-FS writers.
+
 **Cutover checklist** (ROADMAP §11 step 3, when the binary becomes default and the shell
 is frozen to `bin/legacy/`):
 - OverlapPolicy is already vision-mode (RejectOverlap default) — no flip needed.

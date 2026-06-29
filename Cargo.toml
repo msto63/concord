@@ -10,7 +10,7 @@
 # (M2 daemon = notify, M3 MCP = rmcp) add deps in their own crates.
 [workspace]
 resolver = "2"
-members = ["crates/concord-core", "crates/concord"]
+members = ["crates/concord-core", "crates/concord", "crates/concordd"]
 
 [workspace.package]
 version = "0.2.1"

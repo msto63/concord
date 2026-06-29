@@ -5,7 +5,9 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use concord_core::store::{ClaimOutcome, OverlapPolicy, ReleaseOutcome};
+use concord_core::store::{
+    ClaimOutcome, HoldStatus, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
+};
 use concord_core::{Paths, Store};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -111,12 +113,88 @@ fn release_reports_no_lease_then_released() {
     let s = store_at(&paths, 3000);
     s.register("a", "").unwrap();
     assert_eq!(
-        s.release("a", "x/y").unwrap(),
+        s.release("a", "x/y", None).unwrap(),
         ReleaseOutcome::NoLease,
         "releasing an unheld area is a no-op"
     );
     s.claim("a", "x/y", "", OverlapPolicy::RejectOverlap).unwrap();
-    assert_eq!(s.release("a", "x/y").unwrap(), ReleaseOutcome::Released);
+    assert_eq!(s.release("a", "x/y", None).unwrap(), ReleaseOutcome::Released);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn release_enforces_ownership_and_fence_floor() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 5000);
+    s.register("a", "").unwrap();
+    s.register("b", "").unwrap();
+    s.claim("a", "area/x", "mine", OverlapPolicy::RejectOverlap)
+        .unwrap();
+
+    // b cannot release a's lease (ownership enforcement; the shell would delete it).
+    match s.release("b", "area/x", None).unwrap() {
+        ReleaseOutcome::NotYours { holder } => assert_eq!(holder, "a"),
+        other => panic!("expected NotYours, got {other:?}"),
+    }
+    // The lease is still there.
+    assert!(matches!(
+        s.verify_hold("a", "area/x").unwrap(),
+        HoldStatus::Held { .. }
+    ));
+
+    // a presenting a stale fence is refused (fencing Floor).
+    let fence = match s.verify_hold("a", "area/x").unwrap() {
+        HoldStatus::Held { fence } => fence,
+        other => panic!("expected Held, got {other:?}"),
+    };
+    match s.release("a", "area/x", Some(fence + 99)).unwrap() {
+        ReleaseOutcome::FenceStale { current } => assert_eq!(current, fence),
+        other => panic!("expected FenceStale, got {other:?}"),
+    }
+    // a with the correct fence succeeds.
+    assert_eq!(
+        s.release("a", "area/x", Some(fence)).unwrap(),
+        ReleaseOutcome::Released
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn merge_unlock_enforces_ownership() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 6000);
+    s.register("a", "").unwrap();
+    s.register("b", "").unwrap();
+    assert_eq!(s.merge_unlock("a").unwrap(), MergeUnlockOutcome::NotHeld);
+    s.merge_lock("a", "merge").unwrap();
+    // b cannot unlock a's merge lock.
+    match s.merge_unlock("b").unwrap() {
+        MergeUnlockOutcome::NotYours { holder } => assert_eq!(holder, "a"),
+        other => panic!("expected NotYours, got {other:?}"),
+    }
+    assert_eq!(s.merge_unlock("a").unwrap(), MergeUnlockOutcome::Released);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn verify_hold_reports_all_states() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 7000);
+    s.register("a", "").unwrap();
+    s.register("b", "").unwrap();
+    assert_eq!(s.verify_hold("a", "z/z").unwrap(), HoldStatus::Vacant);
+    s.claim("a", "z/z", "", OverlapPolicy::RejectOverlap).unwrap();
+    assert!(matches!(
+        s.verify_hold("a", "z/z").unwrap(),
+        HoldStatus::Held { .. }
+    ));
+    match s.verify_hold("b", "z/z").unwrap() {
+        HoldStatus::HeldByOther { holder } => assert_eq!(holder, "a"),
+        other => panic!("expected HeldByOther, got {other:?}"),
+    }
 
     std::fs::remove_dir_all(&root).ok();
 }
