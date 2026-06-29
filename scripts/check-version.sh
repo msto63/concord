@@ -21,8 +21,19 @@ cl="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "$ROOT/CHANGELOG.md" | grep 
 [ -n "$cl" ] || fail "no released '## [X.Y.Z]' heading in CHANGELOG.md"
 [ "$ver" = "$cl" ] || fail "VERSION ($ver) != latest CHANGELOG entry ($cl) — bump one or the other"
 
-cv="$("$ROOT/bin/concord" version 2>/dev/null | awk '{print $NF}')"
-[ "$cv" = "$ver" ] || fail "\`concord version\` ($cv) != VERSION ($ver)"
+# Post Rust-migration: the version flows VERSION → Cargo.toml → the Rust binary
+# (env!("CARGO_PKG_VERSION")). Verify the Cargo.toml workspace version, and the built
+# binary's reported version when one is present. (The shell bin/concord is frozen under
+# bin/legacy/ and no longer the version source.)
+cargo_ver="$(grep -m1 -E '^version = ' "$ROOT/Cargo.toml" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+[ "$cargo_ver" = "$ver" ] || fail "Cargo.toml version ($cargo_ver) != VERSION ($ver) — bump one or the other"
+for b in "$ROOT/target/release/concord" "$ROOT/target/debug/concord"; do
+  if [ -x "$b" ]; then
+    cv="$("$b" version 2>/dev/null | awk '{print $NF}')"
+    [ "$cv" = "$ver" ] || fail "\`concord version\` ($cv) != VERSION ($ver) — rebuild after bumping"
+    break
+  fi
+done
 
 ref="${GITHUB_REF_NAME:-}"
 if echo "$ref" | grep -qE '^v[0-9]'; then

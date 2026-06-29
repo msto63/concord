@@ -88,18 +88,18 @@ dependencies = [
 
 [[package]]
 name = "concord"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "concord-core",
 ]
 
 [[package]]
 name = "concord-core"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "concord-mcp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "concord-core",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "concordd"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "concord-core",
  "notify",

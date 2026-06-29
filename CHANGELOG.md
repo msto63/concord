@@ -11,6 +11,41 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-29
+
+The Rust migration: Concord is now a single typed Rust binary (CLI + push daemon + MCP
+server + launcher), with the shell originals frozen as a parity fallback. This release
+bundles the work that landed since 0.2.1 (the WP12 milestones M2–M5 + WP6 + S1).
+
+### Added
+- **Launcher folded into the one binary (S1).** `concord start/dash/pause/resume/stop`
+  (ported from the shell `bin/concord`) — `start` launches a session in the current
+  terminal (Unix exec-replace) with the right id/env/permissions/kickoff prompt;
+  `--print` is a dry-run; `dash` is the typed live overview. Completes the Rust migration.
+- **`concordd` push daemon (M2).** Watches the coord dir + prose channel (`notify` +
+  debouncer) and demultiplexes directives into per-recipient typed inboxes
+  (`inbox/<id>.jsonl`), so a session wakes on its own deltas instead of re-reading the
+  whole channel. Optional; the filesystem stays authoritative.
+- **Fencing tokens + enforced ownership (M2).** A monotonic fence on leases/merge-lock;
+  release/merge-unlock refuse foreign or stale-fenced authority. The daemon mediates
+  consequential ops (merge-lock, claim, release) with an airtight single-thread
+  check-and-apply (the Floor's residual TOCTOU closed when the daemon is up).
+- **MCP server (M3-lean).** `concord-mcp` exposes the enforced primitives
+  (claim/release/verify/merge-lock/…) as typed `rmcp` tools over stdio.
+- **Typed inbox protocol (WP7-lean).** `concord send` + classified message kinds.
+- **Multi-project + dogfood (M5).** `concord init` / `concord paths`; per-project coord
+  derivation; Concord coordinates its own development via a dedicated `concord-coord`.
+- **Path-prefix overlap rejection** is the default for `claim`.
+
+### Changed
+- **ais coordination cut over to the Rust tool (WP6),** reversibly
+  (`scripts/wp6-ais-cutover.sh`).
+- **Version discipline is Rust-aware.** `scripts/check-version.sh` verifies VERSION ↔
+  CHANGELOG ↔ `Cargo.toml` ↔ the built binary (the frozen shell `bin/concord` is no
+  longer the version source).
+- Decisions recorded in **ADR-0001** (Rust port) and **ADR-0002** (refocus on the
+  enforced core), with a source-level competitive verification.
+
 ## [0.2.1] - 2026-06-28
 ### Changed
 - **Human-director role is now name-abstract (`the operator`).** The coordinator kickoff and
