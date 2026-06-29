@@ -11,6 +11,20 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-29
+
+### Added
+- **`config.toml.example`** — a fully-commented configuration template (every key at its
+  built-in default) in the repo root, **shipped in every release archive** and embedded into
+  `concord init` (one source of truth via `include_str!`, so the example, the init scaffold,
+  and the release asset cannot drift). A round-trip test asserts it parses to exactly
+  `Config::default()`.
+- **Configuration documented** (`docs/MANUAL.md` §11 rewritten; README + QUICKSTART): the
+  `config.toml` is the primary mechanism, with the two install locations (`<repo>-coord/` and
+  user-global `~/.config/concord/`), the precedence (defaults ← user-global ← project), and a
+  copy-from-template step. The legacy `CONCORD_*`/`AIS_*` env vars are documented as
+  deprecated bootstrap-only (honored-with-warning for one release).
+
 ### CI / housekeeping
 - **`tests/mcp-smoke.sh` now runs in CI** (it was unreferenced and could rot). It drives the
   MCP server over a real JSON-RPC handshake and asserts the enforced-only tool surface.

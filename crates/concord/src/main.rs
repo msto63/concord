@@ -35,47 +35,10 @@ use concord_core::{Paths, Result};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// A commented sample `config.toml` written by `concord init` (F-config). Every value is
-/// the built-in default; uncomment + edit to override. `config.toml` > built-in defaults;
-/// environment variables are retired (deprecated, honored-with-warning for one release).
-const SAMPLE_CONFIG: &str = r#"# Concord configuration (F-config). Project config; lives in <coord>/config.toml.
-# Precedence: this file > ~/.config/concord/config.toml > built-in defaults. No env vars.
-# Every key below is the DEFAULT — uncomment + edit to override.
-
-[leases]
-# stale_ttl = 1800           # seconds with no heartbeat before a session is stale
-# overlap_policy = "reject"  # "reject" (path-overlap enforced) | "shell" (exact-slug only)
-# strict = false             # P1 capability-strict edit guard (deny edits to un-leased files)
-
-[daemon]
-# enabled = true             # route consequential ops through the daemon (airtight) when up
-
-[launcher]
-# claude_flags = "--dangerously-skip-permissions"
-# worktree_pattern = "{repo}-{id}"
-
-[escalation]
-# coordinator = "hub"        # default escalation target; gets the coordinator kickoff
-# ack_ttl = 900              # seconds before an un-ACK'd directive is re-delivered
-# redeliver_max = 2          # re-deliveries before an auto-escalation (severity "high")
-# auto_severity = "high"
-
-[resources]
-# port_base = 5900           # qemu-port pool: slot i -> port_base + i
-# default_slots = 1
-
-[telemetry]
-# enabled = false            # launcher enables Claude Code OTel + daemon runs the receiver
-# port = 4319                # local OTLP/HTTP-JSON receiver (own port, not 4317/4318)
-# idle_min = 15              # minutes with no telemetry before a session is IDLE (dark)
-# burn_warn = 20000          # tokens/min above which a session is flagged BURN
-# reject_storm = 5           # edit-tool reject/deny decisions in loop_window -> REJECT
-# loop_window = 600          # look-back window (s) for burn/reject/loop heuristics
-
-# User-global only (~/.config/concord/config.toml): bootstrap map of project -> coord dir.
-# [projects]
-# "/path/to/your-repo" = "/path/to/your-repo-coord"
-"#;
+/// The commented sample `config.toml` written by `concord init`. Single source of truth:
+/// the repo-root `config.toml.example` is embedded here (so the init scaffold, the example
+/// file, and the release asset can never drift). Every value shown is the built-in default.
+const SAMPLE_CONFIG: &str = include_str!("../../../config.toml.example");
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

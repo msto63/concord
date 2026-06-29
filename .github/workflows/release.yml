@@ -61,7 +61,7 @@ jobs:
           dir="concord-${{ matrix.target }}"
           mkdir "$dir"
           cp target/${{ matrix.target }}/release/concord target/${{ matrix.target }}/release/concordd target/${{ matrix.target }}/release/concord-mcp "$dir/"
-          cp README.md LICENSE CHANGELOG.md "$dir/"
+          cp README.md LICENSE CHANGELOG.md config.toml.example "$dir/"
           tar czf "$dir.tar.gz" "$dir"
           shasum -a 256 "$dir.tar.gz" > "$dir.tar.gz.sha256"
 
@@ -72,7 +72,7 @@ jobs:
           $dir = "concord-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $dir | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/concord.exe","target/${{ matrix.target }}/release/concordd.exe","target/${{ matrix.target }}/release/concord-mcp.exe" $dir
-          Copy-Item README.md,LICENSE,CHANGELOG.md $dir
+          Copy-Item README.md,LICENSE,CHANGELOG.md,config.toml.example $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
           (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower() + "  $dir.zip" | Out-File -Encoding ascii "$dir.zip.sha256"
 

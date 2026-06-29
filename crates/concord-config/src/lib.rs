@@ -189,6 +189,14 @@ pub fn load(coord: &Path) -> Config {
     cfg
 }
 
+/// Parse a `config.toml` string into a [`Config`] (defaults overlaid by the file), or
+/// `Err(message)` on malformed TOML. Used by the drift test and any in-memory caller.
+pub fn config_from_str(s: &str) -> Result<Config, String> {
+    let mut cfg = Config::default();
+    RawConfig::parse(s)?.apply(&mut cfg);
+    Ok(cfg)
+}
+
 /// The user-global `[projects]` bootstrap map (project-root → coord-dir).
 pub fn projects_map() -> HashMap<String, String> {
     user_global_path()
@@ -270,5 +278,34 @@ mod tests {
     #[test]
     fn malformed_is_rejected_not_panicked() {
         assert!(RawConfig::parse("this is = = not toml [[[").is_err());
+    }
+
+    /// Drift guard (F-config-docs): the repo-root `config.toml.example`, with its commented
+    /// `key = value` lines uncommented, must parse to EXACTLY `Config::default()`. This is
+    /// measured, not asserted in prose — the example can never silently drift from the code
+    /// defaults (or `concord init`, which embeds the same file).
+    #[test]
+    fn example_matches_code_defaults() {
+        let example = include_str!("../../../config.toml.example");
+        // Uncomment lines of the form `# <lower_ident> = <value>` (the real config keys);
+        // leave section headers, prose comments, and the quoted `[projects]` entries alone.
+        let uncommented: String = example
+            .lines()
+            .map(|l| match l.strip_prefix("# ") {
+                Some(rest) if is_key_line(rest) => rest.to_string(),
+                _ => l.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cfg = config_from_str(&uncommented).expect("example is valid TOML");
+        assert_eq!(cfg, Config::default(), "config.toml.example drifted from Config::default()");
+    }
+
+    /// `# stale_ttl = 1800` → yes; `# "/path" = "..."` / `# Precedence: …` / `[leases]` → no.
+    fn is_key_line(s: &str) -> bool {
+        let s = s.trim_start();
+        let Some((key, _)) = s.split_once('=') else { return false };
+        let key = key.trim();
+        !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '_')
     }
 }
