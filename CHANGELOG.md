@@ -11,6 +11,20 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-06-30
+
+### Changed
+- **Hooks now find a globally-installed `concord`.** `hooks/lib.sh` resolves the coordination
+  CLI as `$CONCORD_BIN` → the project's own `target/` build → **a `concord` on `PATH`** → the
+  shell `coord.sh` → none. The added global-`PATH` step lets a project with no local build
+  (e.g. one driven by an installed release) use the Rust binary; it stays fail-safe (no
+  `concord` anywhere → the shell fallback). Baked into the binary via `include_str!`, so
+  `concord install-hooks` materializes it everywhere. New `tests/coord-sh-resolution.sh`
+  asserts the precedence (in CI); the fail-open hook smoke now isolates from a globally
+  installed binary.
+- Fixed two stale code comments that said "repo-root `config.toml.example`" (it now lives in
+  `config/`).
+
 ## [0.11.2] - 2026-06-30
 
 ### Changed

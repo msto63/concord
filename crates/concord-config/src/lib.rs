@@ -280,7 +280,7 @@ mod tests {
         assert!(RawConfig::parse("this is = = not toml [[[").is_err());
     }
 
-    /// Drift guard (F-config-docs): the repo-root `config.toml.example`, with its commented
+    /// Drift guard (F-config-docs): `config/config.toml.example`, with its commented
     /// `key = value` lines uncommented, must parse to EXACTLY `Config::default()`. This is
     /// measured, not asserted in prose — the example can never silently drift from the code
     /// defaults (or `concord init`, which embeds the same file).

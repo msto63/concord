@@ -36,7 +36,7 @@ use concord_core::{Paths, Result};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The commented sample `config.toml` written by `concord init`. Single source of truth:
-/// the repo-root `config.toml.example` is embedded here (so the init scaffold, the example
+/// `config/config.toml.example` is embedded here (so the init scaffold, the example
 /// file, and the release asset can never drift). Every value shown is the built-in default.
 const SAMPLE_CONFIG: &str = include_str!("../../../config/config.toml.example");
 
