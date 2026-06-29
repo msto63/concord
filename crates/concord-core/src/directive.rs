@@ -27,6 +27,9 @@ pub struct Directive {
     pub targets: Vec<String>,
     /// True for `→ ALLE` / `→ ALL` broadcasts.
     pub broadcast: bool,
+    /// The `(topic)` text (between the first `(` and the last `)`), or empty. WP7
+    /// classifies the message kind from this.
+    pub topic: String,
 }
 
 const ALL_TOKENS: [&str; 3] = ["ALLE", "ALL", "ALLES"];
@@ -55,11 +58,13 @@ pub fn parse_header(line: &str) -> Option<Directive> {
         return None;
     }
 
-    // Recipient spec = text after the arrow up to an optional "(topic)".
+    // Recipient spec = text after the arrow up to an optional "(topic)"; the topic is
+    // the text between the first '(' and the last ')'.
     let after = &rest[idx + arrow_len..];
-    let to_spec = match after.find('(') {
-        Some(p) => &after[..p],
-        None => after,
+    let (to_spec, topic) = match (after.find('('), after.rfind(')')) {
+        (Some(o), Some(c)) if c > o => (&after[..o], after[o + 1..c].trim().to_string()),
+        (Some(o), _) => (&after[..o], after[o + 1..].trim().to_string()),
+        _ => (after, String::new()),
     };
     let to_spec = to_spec.trim();
     if to_spec.is_empty() {
@@ -81,6 +86,7 @@ pub fn parse_header(line: &str) -> Option<Directive> {
         from,
         targets: if broadcast { Vec::new() } else { raw_targets },
         broadcast,
+        topic,
     })
 }
 
@@ -123,23 +129,23 @@ pub fn demux(new_text: &str) -> Vec<Block> {
     blocks
 }
 
-/// Route demultiplexed blocks to recipient inboxes. Returns `(recipient_id, text)`
-/// pairs in block order. A broadcast fans out to every `registered` session except
-/// its own sender (you don't get your own broadcast echoed back). Directed blocks go
-/// to their explicit targets verbatim. Pure — the daemon turns each pair into an
-/// append to `inbox/<recipient_id>`.
-pub fn route(blocks: &[Block], registered: &[String]) -> Vec<(String, String)> {
+/// Route demultiplexed blocks to recipients. Returns `(recipient_id, block)` pairs in
+/// block order. A broadcast fans out to every `registered` session except its own
+/// sender (you don't get your own broadcast echoed back). Directed blocks go to their
+/// explicit targets. Pure — the daemon turns each pair into a typed inbox message
+/// (WP7) or, in the M2 substrate, a raw append.
+pub fn route(blocks: &[Block], registered: &[String]) -> Vec<(String, Block)> {
     let mut out = Vec::new();
     for b in blocks {
         if b.directive.broadcast {
             for id in registered {
                 if *id != b.directive.from {
-                    out.push((id.clone(), b.text.clone()));
+                    out.push((id.clone(), b.clone()));
                 }
             }
         } else {
             for t in &b.directive.targets {
-                out.push((t.clone(), b.text.clone()));
+                out.push((t.clone(), b.clone()));
             }
         }
     }
@@ -226,9 +232,9 @@ not a header line
         // Directed → concord-w; broadcast from concord-w → a + hub (not concord-w).
         assert_eq!(routed.len(), 3);
         assert_eq!(routed[0].0, "concord-w");
-        assert!(routed[0].1.starts_with("### hub → concord-w"));
+        assert!(routed[0].1.text.starts_with("### hub → concord-w"));
         assert_eq!(routed[1].0, "a");
         assert_eq!(routed[2].0, "hub");
-        assert!(routed[1].1.starts_with("### concord-w → ALLE"));
+        assert!(routed[1].1.text.starts_with("### concord-w → ALLE"));
     }
 }

@@ -24,6 +24,7 @@ use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
+use concord_core::message::{Message, MessageKind};
 use concord_core::store::{
     ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
     StatusReport, Store,
@@ -270,6 +271,33 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
+        "send" => {
+            // First-class typed message (WP7): concord send <from> <to> <kind> [--ref R] <body...>
+            // Delivers a typed message straight to inbox/<to>.jsonl (no prose mirror,
+            // so it never double-delivers via the daemon's prose demux).
+            let reference = flag_value(rest, "--ref").map(str::to_string);
+            let pos = positional_args(rest, &["--ref"]);
+            let from = pos.first().ok_or(concord_core::ConcordError::MissingArg("from"))?;
+            let to = pos.get(1).ok_or(concord_core::ConcordError::MissingArg("to"))?;
+            let kind_tok = pos
+                .get(2)
+                .ok_or(concord_core::ConcordError::MissingArg("kind"))?;
+            let kind = match MessageKind::parse(kind_tok) {
+                Some(k) => k,
+                None => {
+                    println!(
+                        "unknown kind '{kind_tok}' (go|ack|design|arbitration|status|decision|blocked|done|ready|idle|merge-ready|stand-down|note)"
+                    );
+                    return Ok(ExitCode::from(2));
+                }
+            };
+            let body = pos.get(3..).map(|s| s.join(" ")).unwrap_or_default();
+            let msg = Message::new(store.now(), from, to, kind, reference, &body);
+            store.deliver_message(&msg)?;
+            println!("sent {from} → {to} ({})", kind.as_str());
+            Ok(ExitCode::SUCCESS)
+        }
+
         other => {
             println!("unknown command: {other}");
             print_usage();
@@ -336,7 +364,8 @@ Concord — multi-session coordination (Rust port of bin/coord.sh).
   concord merge-lock <id> [why]                  # BEFORE merging (singleton)
   concord merge-unlock <id>                      # after the merge (refuses foreign)
   concord log <id> <event...>                    # record a structured intent
-  concord sync <id> <target> <topic> <body>      # post to the prose channel
+  concord sync <id> <target> <topic> <body>      # post to the prose channel (human log)
+  concord send <from> <to> <kind> [--ref R] <body>  # typed message → inbox/<to>.jsonl (WP7)
   concord version                                # print the Concord version";
     println!("{usage}");
 }
@@ -386,4 +415,26 @@ fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
         .position(|a| a == flag)
         .and_then(|i| rest.get(i + 1))
         .map(String::as_str)
+}
+
+/// Positional args, skipping `--flag value` pairs named in `value_flags` and any other
+/// bare `--flag`. Used by `send` to separate from/to/kind/body from `--ref R`.
+fn positional_args(rest: &[String], value_flags: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for a in rest {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if value_flags.contains(&a.as_str()) {
+            skip = true;
+            continue;
+        }
+        if a.starts_with("--") {
+            continue;
+        }
+        out.push(a.clone());
+    }
+    out
 }

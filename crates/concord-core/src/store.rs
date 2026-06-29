@@ -18,6 +18,7 @@ use std::path::Path;
 
 use crate::clock;
 use crate::error::{ConcordError, Result};
+use crate::message::Message;
 use crate::model::{LedgerEntry, Lease, MergeLock, Session};
 use crate::paths::Paths;
 use crate::slug;
@@ -336,6 +337,15 @@ impl Store {
     pub fn log(&self, id: &str, event: &str) -> Result<()> {
         self.append_log(id, event)?;
         Ok(())
+    }
+
+    /// `send`: deliver a typed message to the recipient's inbox (`inbox/<to>.jsonl`),
+    /// the first-class WP7 path. Same on-disk shape the daemon's demux writes, so a
+    /// consumer reads `send`-delivered and derived messages uniformly.
+    pub fn deliver_message(&self, msg: &Message) -> Result<()> {
+        let dir = self.paths.coord.join("inbox");
+        mkdirs(&dir)?;
+        append_file(&dir.join(format!("{}.jsonl", msg.to)), &msg.to_jsonl())
     }
 
     /// `sync <id> <target> <topic> <body>`: append a prose-channel entry and log it.

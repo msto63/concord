@@ -26,8 +26,10 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::Duration;
 
+use concord_core::clock;
 use concord_core::directive::{demux, route};
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
+use concord_core::message::Message;
 use concord_core::store::{MergeLockOutcome, MergeUnlockOutcome};
 use concord_core::{Paths, Store};
 use notify_debouncer_full::notify::RecursiveMode;
@@ -237,28 +239,33 @@ fn catch_up(paths: &Paths) -> usize {
     let registered = registered_sessions(paths);
     let routed = route(&blocks, &registered);
 
-    for (recipient, text) in &routed {
-        if let Err(e) = append_inbox(paths, recipient, text) {
+    // WP7: each routed block becomes a typed Message, appended as one JSONL line to
+    // the recipient's typed inbox (`inbox/<id>.jsonl`). The kind is classified
+    // conservatively from the topic; an AP-ref is extracted when present.
+    let ts = clock::now();
+    for (recipient, block) in &routed {
+        let msg = Message::from_block(block, recipient, ts);
+        if let Err(e) = append_inbox(paths, recipient, &msg.to_jsonl()) {
             eprintln!("[concordd] warn: inbox append for {recipient} failed: {e}");
         }
     }
 
     write_offset(paths, len);
     if !routed.is_empty() {
-        eprintln!("[concordd] routed {} block(s) to inboxes", routed.len());
+        eprintln!("[concordd] routed {} typed message(s) to inboxes", routed.len());
     }
     routed.len()
 }
 
-/// Append a directive block to `inbox/<recipient>`, creating it if needed. The append
-/// bumps the file's mtime — the signal a consumer's watcher wakes on.
-fn append_inbox(paths: &Paths, recipient: &str, text: &str) -> std::io::Result<()> {
+/// Append a pre-formatted JSONL line (already `\n`-terminated) to the recipient's
+/// typed inbox `inbox/<recipient>.jsonl`, creating it if needed. The append bumps the
+/// file's mtime — the signal a consumer's watcher wakes on.
+fn append_inbox(paths: &Paths, recipient: &str, jsonl_line: &str) -> std::io::Result<()> {
     let dir = inbox_dir(paths);
     fs::create_dir_all(&dir)?;
-    let file = dir.join(recipient);
+    let file = dir.join(format!("{recipient}.jsonl"));
     let mut f = fs::OpenOptions::new().create(true).append(true).open(file)?;
-    // Blank-line separated blocks so a consumer reads clean, whole directives.
-    writeln!(f, "{text}\n")
+    f.write_all(jsonl_line.as_bytes())
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
