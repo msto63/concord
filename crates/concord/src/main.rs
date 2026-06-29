@@ -21,6 +21,8 @@
 
 use std::process::ExitCode;
 
+mod launcher;
+
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::{Message, MessageKind};
 use concord_core::store::{
@@ -74,6 +76,26 @@ fn run(args: &[String]) -> Result<ExitCode> {
         "status" => {
             print_status(&store)?;
             Ok(ExitCode::SUCCESS)
+        }
+
+        // ── launcher (S1) — the former bin/concord, now folded into the one tool ──
+        "start" => {
+            let id = require(rest, 0, "session id")?;
+            let print = rest.iter().any(|a| a == "--print" || a == "--dry-run");
+            Ok(launcher::cmd_start(store.paths(), id, print))
+        }
+        "dash" => Ok(launcher::cmd_dash(&store)),
+        "pause" => {
+            let id = require(rest, 0, "session id")?;
+            Ok(launcher::cmd_pause(store.paths(), id))
+        }
+        "resume" => {
+            let id = require(rest, 0, "session id")?;
+            Ok(launcher::cmd_resume(store.paths(), id))
+        }
+        "stop" => {
+            let id = require(rest, 0, "session id")?;
+            Ok(launcher::cmd_stop(&store, id))
         }
 
         "paths" => {
@@ -457,6 +479,10 @@ Concord — multi-session coordination (Rust port of bin/coord.sh).
 
   concord init [--project <path>] [--ids a,b,c] # bootstrap a project's coordination state
   concord paths                                 # print resolved CONCORD_DIR/SYNC/PROJECT (eval-able)
+  concord start <id> [--print]                  # launch a session in this terminal (--print = dry-run)
+  concord dash                                  # live overview: status + last prose post per session
+  concord pause <id> | resume <id>              # set/clear a session's pause flag
+  concord stop <id>                             # ask a session to stop cleanly (via the prose channel)
   concord register <id> <focus>                 # once, at session start
   concord heartbeat <id>                         # periodically (keeps you \"alive\")
   concord status                                 # who is active + what is leased

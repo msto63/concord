@@ -20,7 +20,7 @@
 set -euo pipefail
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SHELL_COORD_SH="$HERE/bin/coord.sh"
+SHELL_COORD_SH="$HERE/bin/legacy/coord.sh"   # the frozen shell tool (parity fallback, S1)
 RUST_BIN="${CONCORD_BIN:-$HERE/target/release/concord}"
 
 if [ ! -x "$RUST_BIN" ]; then
