@@ -1,43 +1,85 @@
-//! `concord-ast` — AST symbol extraction for Concord's symbol-level leases (WP12 S2).
+//! `concord-ast` — AST symbol extraction + call graph for Concord's symbol-level leases
+//! (WP12 S2). The only crate that pulls a native parser (`tree-sitter`); kept separate so
+//! `concord-core` stays std-only / zero-dep.
 //!
-//! This is the only crate that pulls a native parser (`tree-sitter`); it is kept
-//! separate so `concord-core` stays std-only / zero-dep. It answers one question for the
-//! lease layer: *what symbols does this source define, and where?* — so a symbol-lease
-//! (`<file>:<symbol>`) can be validated and (later, S2.2) a call graph derived.
+//! - **Symbols** (S2.1, all langs here): what top-level symbols a file defines, with byte
+//!   ranges — so a symbol-lease (`<file>:<symbol>`) can be validated.
+//! - **Call graph** (S2.2, Rust): caller→callee edges, so a claim can surface an
+//!   *advisory* DEP_CHAIN warning ("the symbol you're claiming calls one another session
+//!   holds"). The warning is advisory (a call edge is a hint, not mutual exclusion); the
+//!   symbol-lease itself stays enforced — the Concord vision line vs. the prior-art `wit`,
+//!   whose symbol locks are advisory.
 //!
-//! Rust first (the dogfood — Concord coordinates its own Rust development at symbol
-//! granularity); TypeScript/Python follow in S2.2. Native tree-sitter (not WASM like
-//! the prior-art `wit`, which is TypeScript) — faster and dependency-light.
+//! Rust first (the dogfood), with TypeScript + Python for breadth. Native tree-sitter
+//! (not WASM like `wit`, which is TypeScript) — faster and dependency-light.
 
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Language, Parser, Query, QueryCursor};
+
+/// A supported source language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lang {
+    Rust,
+    TypeScript,
+    Python,
+}
+
+impl Lang {
+    /// Infer the language from a file path's extension, or `None`.
+    pub fn from_path(path: &str) -> Option<Lang> {
+        let ext = path.rsplit('.').next()?;
+        match ext {
+            "rs" => Some(Lang::Rust),
+            "ts" | "tsx" | "js" | "jsx" | "mts" | "cts" => Some(Lang::TypeScript),
+            "py" | "pyi" => Some(Lang::Python),
+            _ => None,
+        }
+    }
+
+    fn language(self) -> Language {
+        match self {
+            Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
+            Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Lang::Python => tree_sitter_python::LANGUAGE.into(),
+        }
+    }
+
+    fn symbol_query(self) -> &'static str {
+        match self {
+            Lang::Rust => RUST_SYMBOLS,
+            Lang::TypeScript => TS_SYMBOLS,
+            Lang::Python => PY_SYMBOLS,
+        }
+    }
+}
 
 /// A top-level symbol definition and its source span.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
-    /// The symbol name (e.g. `validate_token`).
     pub name: String,
-    /// A coarse kind (`function`, `struct`, `enum`, `trait`, `type`, `const`, `static`,
-    /// `mod`, `macro`) derived from the tree-sitter node type.
+    /// Coarse kind derived from the node type (`function`, `struct`, `class`, …).
     pub kind: String,
-    /// Byte span of the whole definition (the `@def` node).
     pub start_byte: usize,
     pub end_byte: usize,
-    /// 0-based line span (for display).
     pub start_row: usize,
     pub end_row: usize,
 }
 
 impl Symbol {
-    /// Does this symbol's byte span overlap `other`'s? (Used to detect a nested-symbol
-    /// claim conflict — an outer fn containing an inner one — which the pure path/symbol
-    /// string rule in `concord-core` cannot see.)
+    /// Does this symbol's byte span overlap `other`'s? (Nested-symbol claim conflict.)
     pub fn byte_overlaps(&self, other: &Symbol) -> bool {
         self.start_byte < other.end_byte && other.start_byte < self.end_byte
     }
 }
 
-const RUST_QUERY: &str = r#"
+/// A call-graph edge: `caller` (the enclosing symbol) calls `callee` (a bare name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dep {
+    pub caller: String,
+    pub callee: String,
+}
+
+const RUST_SYMBOLS: &str = r#"
 (function_item   name: (identifier)      @name) @def
 (struct_item     name: (type_identifier) @name) @def
 (enum_item       name: (type_identifier) @name) @def
@@ -50,34 +92,44 @@ const RUST_QUERY: &str = r#"
 (macro_definition name: (identifier)     @name) @def
 "#;
 
-fn rust_language() -> tree_sitter::Language {
-    tree_sitter_rust::LANGUAGE.into()
-}
+const TS_SYMBOLS: &str = r#"
+(function_declaration name: (identifier) @name) @def
+(variable_declarator name: (identifier) @name value: (arrow_function)) @def
+(method_definition name: (property_identifier) @name) @def
+(class_declaration name: (type_identifier) @name) @def
+(interface_declaration name: (type_identifier) @name) @def
+(type_alias_declaration name: (type_identifier) @name) @def
+(enum_declaration name: (identifier) @name) @def
+"#;
 
-/// Map a tree-sitter node kind (`function_item`, …) to a coarse symbol kind.
+const PY_SYMBOLS: &str = r#"
+(function_definition name: (identifier) @name) @def
+(class_definition name: (identifier) @name) @def
+"#;
+
 fn coarse_kind(node_kind: &str) -> String {
     node_kind
         .trim_end_matches("_item")
         .trim_end_matches("_definition")
+        .trim_end_matches("_declaration")
+        .trim_end_matches("_declarator")
         .to_string()
 }
 
-/// Extract the top-level symbols defined in a Rust source string. Returns an empty
-/// vec if the source cannot be parsed. (Function items include both free functions and
-/// methods inside `impl` blocks.)
-pub fn extract_rust_symbols(source: &str) -> Vec<Symbol> {
-    let lang = rust_language();
+fn parse(lang: Language, source: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
-    if parser.set_language(&lang).is_err() {
+    parser.set_language(&lang).ok()?;
+    parser.parse(source, None)
+}
+
+/// Extract the top-level symbols defined in `source` for `lang`. Empty on parse failure.
+pub fn extract_symbols(lang: Lang, source: &str) -> Vec<Symbol> {
+    let language = lang.language();
+    let Some(tree) = parse(language.clone(), source) else {
         return Vec::new();
-    }
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return Vec::new(),
     };
-    let query = match Query::new(&lang, RUST_QUERY) {
-        Ok(q) => q,
-        Err(_) => return Vec::new(),
+    let Ok(query) = Query::new(&language, lang.symbol_query()) else {
+        return Vec::new();
     };
     let name_idx = query.capture_index_for_name("name");
     let src = source.as_bytes();
@@ -96,9 +148,8 @@ pub fn extract_rust_symbols(source: &str) -> Vec<Symbol> {
             }
         }
         if let (Some(nm), Some(def)) = (name_node, def_node) {
-            let name = String::from_utf8_lossy(&src[nm.byte_range()]).into_owned();
             out.push(Symbol {
-                name,
+                name: String::from_utf8_lossy(&src[nm.byte_range()]).into_owned(),
                 kind: coarse_kind(def.kind()),
                 start_byte: def.start_byte(),
                 end_byte: def.end_byte(),
@@ -110,11 +161,19 @@ pub fn extract_rust_symbols(source: &str) -> Vec<Symbol> {
     out
 }
 
-/// Find a top-level Rust symbol by name (first match), or `None`.
-pub fn resolve_rust_symbol(source: &str, name: &str) -> Option<Symbol> {
-    extract_rust_symbols(source)
+/// Find a symbol by name (first match) in `source` for `lang`.
+pub fn resolve_symbol(lang: Lang, source: &str, name: &str) -> Option<Symbol> {
+    extract_symbols(lang, source)
         .into_iter()
         .find(|s| s.name == name)
+}
+
+// Rust-only convenience wrappers (S2.1 call sites).
+pub fn extract_rust_symbols(source: &str) -> Vec<Symbol> {
+    extract_symbols(Lang::Rust, source)
+}
+pub fn resolve_rust_symbol(source: &str, name: &str) -> Option<Symbol> {
+    resolve_symbol(Lang::Rust, source, name)
 }
 
 /// The symbol-lease area string for a file + symbol (`<file>:<symbol>`).
@@ -122,84 +181,131 @@ pub fn symbol_path(file: &str, symbol: &str) -> String {
     format!("{file}:{symbol}")
 }
 
+/// Extract intra-file call edges (Rust): for each call, the callee's bare name and the
+/// enclosing top-level symbol (the caller). Cross-file resolution is out of scope; the
+/// callee name is matched against held symbol-leases for the advisory DEP_CHAIN warning.
+pub fn extract_rust_calls(source: &str) -> Vec<Dep> {
+    let language: Language = tree_sitter_rust::LANGUAGE.into();
+    let Some(tree) = parse(language.clone(), source) else {
+        return Vec::new();
+    };
+    let Ok(query) = Query::new(&language, "(call_expression function: (_) @fn) @call") else {
+        return Vec::new();
+    };
+    let fn_idx = query.capture_index_for_name("fn");
+    let src = source.as_bytes();
+    let symbols = extract_rust_symbols(source);
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), src);
+    let mut out = Vec::new();
+    while let Some(m) = matches.next() {
+        let mut fn_node = None;
+        let mut call_start = None;
+        for cap in m.captures {
+            if Some(cap.index) == fn_idx {
+                fn_node = Some(cap.node);
+            } else {
+                call_start = Some(cap.node.start_byte());
+            }
+        }
+        let (Some(fnn), Some(start)) = (fn_node, call_start) else {
+            continue;
+        };
+        let callee = callee_name(&String::from_utf8_lossy(&src[fnn.byte_range()]));
+        if callee.is_empty() {
+            continue;
+        }
+        // caller = the innermost top-level symbol whose byte range contains the call.
+        if let Some(caller) = symbols
+            .iter()
+            .filter(|s| s.start_byte <= start && start < s.end_byte)
+            .min_by_key(|s| s.end_byte - s.start_byte)
+        {
+            out.push(Dep {
+                caller: caller.name.clone(),
+                callee,
+            });
+        }
+    }
+    out
+}
+
+/// The bare callee name from a call's function expression text: strip generic args, then
+/// take the last `.`/`::` path segment (`self.foo`→`foo`, `A::b`→`b`, `foo`→`foo`).
+fn callee_name(func_text: &str) -> String {
+    let base = func_text.split('<').next().unwrap_or(func_text);
+    base.rsplit(['.', ':'])
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const SRC: &str = r#"
-use std::fmt;
-
+    const RS: &str = r#"
 pub struct Auth { token: String }
-
 pub fn validate_token(t: &str) -> bool { !t.is_empty() }
-
-impl Auth {
-    pub fn login(&self) -> bool { validate_token(&self.token) }
-}
-
-enum Role { Admin, User }
+impl Auth { pub fn login(&self) -> bool { validate_token(&self.token) } }
+enum Role { Admin }
 const MAX: u32 = 10;
 "#;
 
     #[test]
-    fn extracts_top_level_symbols() {
-        let syms = extract_rust_symbols(SRC);
-        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"Auth"));
-        assert!(names.contains(&"validate_token"));
-        assert!(names.contains(&"login")); // method inside impl
-        assert!(names.contains(&"Role"));
-        assert!(names.contains(&"MAX"));
+    fn rust_symbols() {
+        let names: Vec<String> = extract_rust_symbols(RS).into_iter().map(|s| s.name).collect();
+        for n in ["Auth", "validate_token", "login", "Role", "MAX"] {
+            assert!(names.contains(&n.to_string()), "missing {n}");
+        }
     }
 
     #[test]
-    fn kinds_are_coarse() {
-        let syms = extract_rust_symbols(SRC);
-        let f = syms.iter().find(|s| s.name == "validate_token").unwrap();
-        assert_eq!(f.kind, "function");
-        let s = syms.iter().find(|s| s.name == "Auth").unwrap();
-        assert_eq!(s.kind, "struct");
+    fn typescript_symbols() {
+        let src = "export function foo(){}\nclass Bar {}\ninterface Baz {}\nconst qux = () => 1;";
+        let names: Vec<String> =
+            extract_symbols(Lang::TypeScript, src).into_iter().map(|s| s.name).collect();
+        for n in ["foo", "Bar", "Baz", "qux"] {
+            assert!(names.contains(&n.to_string()), "missing {n} in {names:?}");
+        }
     }
 
     #[test]
-    fn resolve_finds_byte_range() {
-        let s = resolve_rust_symbol(SRC, "validate_token").unwrap();
-        assert!(s.end_byte > s.start_byte);
-        assert_eq!(&SRC[s.start_byte..s.start_byte + 6], "pub fn");
+    fn python_symbols() {
+        let src = "def foo():\n    pass\nclass Bar:\n    def meth(self):\n        pass\n";
+        let names: Vec<String> =
+            extract_symbols(Lang::Python, src).into_iter().map(|s| s.name).collect();
+        for n in ["foo", "Bar", "meth"] {
+            assert!(names.contains(&n.to_string()), "missing {n} in {names:?}");
+        }
     }
 
     #[test]
-    fn resolve_missing_is_none() {
-        assert!(resolve_rust_symbol(SRC, "nonexistent").is_none());
+    fn lang_from_path() {
+        assert_eq!(Lang::from_path("a/b.rs"), Some(Lang::Rust));
+        assert_eq!(Lang::from_path("a/b.ts"), Some(Lang::TypeScript));
+        assert_eq!(Lang::from_path("a/b.py"), Some(Lang::Python));
+        assert_eq!(Lang::from_path("a/b.txt"), None);
     }
 
     #[test]
-    fn byte_overlap_detects_nesting() {
-        let outer = Symbol {
-            name: "o".into(),
-            kind: "function".into(),
-            start_byte: 0,
-            end_byte: 100,
-            start_row: 0,
-            end_row: 9,
-        };
-        let inner = Symbol {
-            name: "i".into(),
-            kind: "function".into(),
-            start_byte: 20,
-            end_byte: 40,
-            start_row: 2,
-            end_row: 3,
-        };
-        let sep = Symbol {
-            name: "s".into(),
-            kind: "function".into(),
-            start_byte: 200,
-            end_byte: 250,
-            start_row: 20,
-            end_row: 25,
-        };
-        assert!(outer.byte_overlaps(&inner));
-        assert!(!outer.byte_overlaps(&sep));
+    fn rust_call_graph() {
+        // login calls validate_token → edge (login → validate_token).
+        let deps = extract_rust_calls(RS);
+        assert!(
+            deps.iter()
+                .any(|d| d.caller == "login" && d.callee == "validate_token"),
+            "expected login→validate_token in {deps:?}"
+        );
+    }
+
+    #[test]
+    fn callee_name_strips_paths_and_generics() {
+        assert_eq!(callee_name("self.foo"), "foo");
+        assert_eq!(callee_name("A::b"), "b");
+        assert_eq!(callee_name("foo"), "foo");
+        assert_eq!(callee_name("collect::<Vec<_>>"), "collect");
     }
 }

@@ -18,7 +18,20 @@ cat > "$PROJ/src/lib.rs" <<'RS'
 pub fn foo() -> u32 { 1 }
 pub fn bar() -> u32 { 2 }
 struct Baz;
+pub fn caller() -> u32 { foo() + 1 }
 RS
+cat > "$PROJ/src/app.ts" <<'TS'
+export function greet(): string { return "hi"; }
+class Widget {}
+TS
+cat > "$PROJ/svc.py" <<'PY'
+def serve():
+    pass
+
+class Server:
+    def run(self):
+        pass
+PY
 fail=0
 # Run the tool with cwd = the project (so it derives proj/coord by convention) and a
 # cleared env (the incident lesson — no leaked CONCORD_DIR).
@@ -50,6 +63,19 @@ o=$(run claim a src/lib.rs:nonexistent "future fn" 2>&1) && rc=0 || rc=$?; chk "
 run release a src/lib.rs:foo >/dev/null; run release b src/lib.rs:bar >/dev/null; run release a src/lib.rs:nonexistent >/dev/null
 o=$(run claim c src/lib.rs "now free") && rc=0 || rc=$?; chk "after releasing all symbols, file path-lease succeeds" "$o" "CLAIMED"; chkx "c file claim ok" "$rc" 0
 
+# ── S2.2: call-graph DEP_CHAIN advisory + TS/Python symbols ──
+run release c src/lib.rs >/dev/null   # free the whole-file lease from the S2.1 section
+# a holds foo; b claims caller (which CALLS foo) → advisory DEP_CHAIN note, still CLAIMED.
+o=$(run claim a src/lib.rs:foo "edit foo" 2>&1) && rc=0 || rc=$?
+o=$(run claim b src/lib.rs:caller "edit caller" 2>&1) && rc=0 || rc=$?
+chk "DEP_CHAIN: caller→foo warns (advisory)" "$o" "DEP_CHAIN"
+chk "DEP_CHAIN: caller still CLAIMED (enforced lease, advisory warning)" "$o" "CLAIMED"
+run release a src/lib.rs:foo >/dev/null; run release b src/lib.rs:caller >/dev/null
+
+# TypeScript + Python symbol extraction via the same `symbols` command.
+o=$(run symbols src/app.ts); chk "TS symbols: greet" "$o" "src/app.ts:greet"; chk "TS symbols: Widget [class]" "$o" "[class]"
+o=$(run symbols svc.py);     chk "Python symbols: serve" "$o" "svc.py:serve"; chk "Python symbols: run (method)" "$o" "svc.py:run"
+
 echo ""
-if [ "$fail" = 0 ]; then echo "SYMBOL LOCKS: ALL PASS — disjoint symbols parallel, path subsumes, enforced"; else echo "SYMBOL LOCKS: FAILURES"; fi
+if [ "$fail" = 0 ]; then echo "SYMBOL LOCKS: ALL PASS — disjoint symbols parallel, path subsumes, enforced; DEP_CHAIN advisory; TS/Python"; else echo "SYMBOL LOCKS: FAILURES"; fi
 exit $fail

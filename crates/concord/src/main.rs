@@ -103,9 +103,13 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // symbol-leases under that path (S2).
             let file = require(rest, 0, "file")?;
             let path = store.paths().project.join(file);
+            let Some(lang) = concord_ast::Lang::from_path(file) else {
+                println!("unsupported file type: {file} (rust/typescript/python)");
+                return Ok(ExitCode::from(2));
+            };
             match std::fs::read_to_string(&path) {
                 Ok(src) => {
-                    let syms = concord_ast::extract_rust_symbols(&src);
+                    let syms = concord_ast::extract_symbols(lang, &src);
                     if syms.is_empty() {
                         println!("(no symbols found in {file})");
                     }
@@ -170,9 +174,10 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
             let why = opt(rest, 2).unwrap_or("");
-            // S2: if this is a symbol-lease (`<file>:<symbol>`), validate the symbol
-            // exists (advisory note only — it may be new/about-to-be-created).
-            validate_symbol_area(store.paths(), area);
+            // S2: if this is a symbol-lease (`<file>:<symbol>`), emit advisory notes —
+            // the symbol's existence (S2.1) and a call-graph DEP_CHAIN warning (S2.2).
+            // Both are advisory (stderr); the claim itself is enforced and proceeds.
+            symbol_claim_advisories(&store, area, id);
             // M3L.2 Strong tier: route through the daemon (airtight check-and-apply)
             // when it is up; the Floor (direct, RejectOverlap default) otherwise.
             if let Some(resp) = mediate(
@@ -544,20 +549,48 @@ fn opt(rest: &[String], idx: usize) -> Option<&str> {
     rest.get(idx).map(String::as_str)
 }
 
-/// S2: for a symbol-lease area (`<file>:<symbol>`), emit an advisory note to stderr if
-/// the symbol cannot be found in the (Rust) file — it may be new or about to be created,
-/// so this never blocks the claim. Rust only in S2.1; TS/Python follow in S2.2.
-fn validate_symbol_area(paths: &Paths, area: &str) {
+/// S2: advisory notes (stderr) for a symbol-lease claim — never blocks (the lease itself
+/// is enforced). (1) Existence: warn if the symbol isn't in the file (it may be new).
+/// (2) DEP_CHAIN: warn if the claimed Rust symbol CALLS a symbol another session holds —
+/// a call edge is a hint, not mutual exclusion (the genuinely-advisory layer, like wit).
+fn symbol_claim_advisories(store: &Store, area: &str, claimer: &str) {
     let (file, sym) = concord_core::slug::split_symbol(area);
     let Some(symbol) = sym else { return };
-    if !file.ends_with(".rs") {
+    let Some(lang) = concord_ast::Lang::from_path(file) else { return };
+    let Ok(src) = std::fs::read_to_string(store.paths().project.join(file)) else { return };
+
+    if concord_ast::resolve_symbol(lang, &src, symbol).is_none() {
+        eprintln!(
+            "note: symbol '{symbol}' not found in {file} (claiming anyway — it may be new or about to be created)"
+        );
+    }
+
+    // DEP_CHAIN (Rust call graph): which symbols does `symbol` call?
+    if lang != concord_ast::Lang::Rust {
         return;
     }
-    if let Ok(src) = std::fs::read_to_string(paths.project.join(file)) {
-        if concord_ast::resolve_rust_symbol(&src, symbol).is_none() {
-            eprintln!(
-                "note: symbol '{symbol}' not found in {file} (claiming anyway — it may be new or about to be created)"
-            );
+    let callees: std::collections::HashSet<String> = concord_ast::extract_rust_calls(&src)
+        .into_iter()
+        .filter(|d| d.caller == symbol)
+        .map(|d| d.callee)
+        .collect();
+    if callees.is_empty() {
+        return;
+    }
+    if let Ok(report) = store.status() {
+        for lease in &report.leases {
+            if lease.holder == claimer {
+                continue;
+            }
+            let (_, held_sym) = concord_core::slug::split_symbol(&lease.area);
+            if let Some(hs) = held_sym {
+                if callees.contains(hs) {
+                    eprintln!(
+                        "DEP_CHAIN note: '{symbol}' calls '{hs}', which is leased by '{}' ({}) — coordinate if you change its contract",
+                        lease.holder, lease.area
+                    );
+                }
+            }
         }
     }
 }
