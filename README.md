@@ -3,7 +3,7 @@
 **Let several AI coding assistants work in the same codebase at once — without stepping on each other.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.11.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.4-blue.svg)](CHANGELOG.md)
 
 Concord is a small, self-contained tool that coordinates a team of AI coding sessions (for
 example several [Claude Code](https://claude.com/claude-code) windows) working on one
@@ -132,6 +132,87 @@ concord dash
 Each session boots into its own worktree, reports that it's ready, and waits for the
 coordinator's go-ahead before taking work. Coordination state lives in `<repo>-coord/`
 next to your repo; the human-readable discussion log is `<repo>-SESSION-SYNC.md`.
+
+## Try it — see the enforcement
+
+The quick start wires up real sessions. To watch the *enforcement* in 30 seconds — with no
+worktrees, no daemon — run this in a throwaway repo. Every line below is real output.
+
+```bash
+mkdir demo && cd demo && git init -q
+mkdir src
+printf 'pub fn foo() -> u32 { 1 }\npub fn bar() -> u32 { 2 }\n' > src/lib.rs
+concord init --ids a,b,hub
+```
+
+**1. Two sessions can't claim the same file.** `a` takes a lease; `b` is refused (exit 2):
+
+```console
+$ concord claim a src/lib.rs "edit"
+CLAIMED src/lib.rs
+$ concord claim b src/lib.rs "edit"
+CONFLICT: 'src/lib.rs' is leased by 'a' — coordinate first (status / SESSION-SYNC)
+```
+
+**2. But they *can* work in the same file on different symbols.** Locks are per-symbol, so
+`a` takes `foo` and `b` takes `bar` — both granted. A third session reaching for `foo` is
+refused:
+
+```console
+$ concord release a src/lib.rs    # drop the whole-file lease from step 1
+released src/lib.rs
+$ concord claim a src/lib.rs:foo "edit foo"
+CLAIMED src/lib.rs:foo
+$ concord claim b src/lib.rs:bar "edit bar"
+CLAIMED src/lib.rs:bar
+$ concord claim c src/lib.rs:foo "also foo"
+CONFLICT: 'src/lib.rs:foo' is leased by 'a' — coordinate first (status / SESSION-SYNC)
+```
+
+**3. A signature contract pins the public shape of a symbol.** Pin `foo`, then change its
+*body* — fine. Change its *signature* — Concord catches it before it can break a caller:
+
+```console
+$ concord contract a src/lib.rs:foo "agreed API"
+CONTRACT src/lib.rs:foo = pub fn foo() -> u32
+
+# body-only edit: { 1 } -> { 1 + 0 }
+$ concord contract-check
+contracts OK
+
+# signature edit: foo() -> foo(n: u32)
+$ concord contract-check
+CONTRACT BROKEN: src/lib.rs:foo
+  agreed:  pub fn foo() -> u32
+  current: pub fn foo(n: u32) -> u32
+1 contract(s) changed without renegotiation — re-agree with the counter-party, then `concord contract <id> <key> --update` (or `contract-release`).
+```
+
+**4. A broken contract blocks the merge itself — and only one session merges at a time.**
+`foo`'s signature is still broken from step 3. The merge lock is a singleton (only one session
+merges at a time), and it refuses to hand out while a contract is broken — so a broken API
+can't sneak through the merge gate. Restore the signature and it's granted; a second session
+then has to wait:
+
+```console
+# foo's signature is still broken from step 3
+$ concord merge-lock hub "cut release"
+CONTRACT BROKEN: src/lib.rs:foo
+  agreed:  pub fn foo() -> u32
+  current: pub fn foo(n: u32) -> u32
+merge-lock refused: 1 broken contract(s) — renegotiate + `contract --update`, or override with --no-contract-check.
+
+# put foo's signature back to `pub fn foo() -> u32`, then retry
+$ concord merge-lock hub "cut release"
+MERGE LOCK acquired
+$ concord merge-lock b "cut release"
+MERGE LOCK held by 'hub' — wait until released
+```
+
+That's the whole idea: leases, symbol-level locks, signature contracts and a merge lock,
+enforced at the editor hook so a session is *stopped*, not just asked nicely. For the full
+walkthrough — including running these as live hooks — see
+**[docs/MANUAL.md](docs/MANUAL.md) §16**.
 
 ## Configuration (optional)
 
