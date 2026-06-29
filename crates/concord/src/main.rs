@@ -26,6 +26,7 @@ mod launcher;
 
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::{Message, MessageKind};
+use concord_core::escalation::ResolveOutcome;
 use concord_core::store::{
     ClaimOutcome, HoldStatus, LeaseCheck, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy,
     ReleaseOutcome, ResourceOutcome, ResourceReleaseOutcome, StatusReport, Store,
@@ -539,6 +540,76 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
+        "ack" => {
+            // F3: explicit acknowledge — clear this session's pending directives (the
+            // machine/MCP form of posting an `### <id> → … (ACK: …)`).
+            let id = require(rest, 0, "session id")?;
+            let pos = positional_args(rest, &[]);
+            let note = pos.get(1..).map(|s| s.join(" ")).unwrap_or_default();
+            let n = store.ack(id, &note)?;
+            println!("ACK {id}: {n} pending directive(s) cleared");
+            Ok(ExitCode::SUCCESS)
+        }
+
+        "escalate" => {
+            // F3: raise a tracked escalation that persists until resolved.
+            //   concord escalate <id> <severity> <body...> [--to <target>] [--ref R]
+            let pos = positional_args(rest, &["--to", "--ref"]);
+            let id = pos.first().map(String::as_str).ok_or(missing("session id"))?;
+            let sev_tok = pos.get(1).map(String::as_str).ok_or(missing("severity (low|medium|high|critical)"))?;
+            let severity = concord_core::escalation::Severity::parse(sev_tok)
+                .ok_or(concord_core::ConcordError::MissingArg("valid severity (low|medium|high|critical)"))?;
+            let about = pos.get(2..).map(|s| s.join(" ")).unwrap_or_default();
+            let to = flag_value(rest, "--to").map(str::to_string).unwrap_or_else(|| store.coordinator());
+            let reference = flag_value(rest, "--ref");
+            let seq = store.escalate(id, &to, severity, &about, reference)?;
+            println!("ESCALATED #{seq} [{}] → {to}", severity.as_str());
+            Ok(ExitCode::SUCCESS)
+        }
+
+        "resolve" => {
+            // F3: close a tracked escalation.  concord resolve <id> <seq> [note...]
+            let id = require(rest, 0, "session id")?;
+            let seq: u64 = require(rest, 1, "escalation seq")?
+                .parse()
+                .map_err(|_| concord_core::ConcordError::MissingArg("numeric escalation seq"))?;
+            let note = rest.get(2..).map(|s| s.join(" ")).unwrap_or_default();
+            match store.resolve_escalation(id, seq, &note)? {
+                ResolveOutcome::Resolved => {
+                    println!("RESOLVED escalation #{seq}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ResolveOutcome::AlreadyResolved => {
+                    println!("escalation #{seq} already resolved");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ResolveOutcome::NotFound => {
+                    println!("no escalation #{seq}");
+                    Ok(ExitCode::from(2))
+                }
+            }
+        }
+
+        "escalations" => {
+            // F3: list escalations (open first) — the coordinator's forwarding queue.
+            let escs = store.escalations()?;
+            if escs.is_empty() {
+                println!("no escalations");
+            } else {
+                for e in &escs {
+                    let age = (concord_core::clock::now().saturating_sub(e.created)) / 60;
+                    let st = if e.status == concord_core::escalation::EscStatus::Resolved { "resolved" } else { "OPEN" };
+                    println!(
+                        "#{} [{}] {} from {} → {} ({}m){}: {}",
+                        e.seq, e.severity.as_str(), st, e.from, e.to, age,
+                        e.reference.as_ref().map(|r| format!(" ref={r}")).unwrap_or_default(),
+                        e.about
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
         "sync" => {
             let id = require(rest, 0, "session id")?;
             let target = require(rest, 1, "target (e.g. K, ALLE, \"C + B\")")?;
@@ -649,6 +720,30 @@ fn print_status(store: &Store) -> Result<()> {
                 r.capacity,
                 holders
             );
+        }
+    }
+    // F3: open escalations (the coordinator's forwarding queue) + the pending-ack debt.
+    let escs = store.escalations()?;
+    let open: Vec<_> = escs
+        .iter()
+        .filter(|e| e.status != concord_core::escalation::EscStatus::Resolved)
+        .collect();
+    if !open.is_empty() {
+        println!("ESCALATIONS (open):");
+        for e in &open {
+            println!(
+                "  #{:<4} [{}] {} → {}: {}",
+                e.seq, e.severity.as_str(), e.from, e.to, e.about
+            );
+        }
+    }
+    let pending = store.pending_summary()?;
+    if !pending.is_empty() {
+        let now = concord_core::clock::now();
+        println!("PENDING ACKS:");
+        for (id, count, oldest) in &pending {
+            let age = now.saturating_sub(*oldest) / 60;
+            println!("  {id:<28} {count} un-ACK'd (oldest {age}m)");
         }
     }
     Ok(())

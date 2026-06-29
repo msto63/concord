@@ -14,6 +14,7 @@
 pub mod clock;
 pub mod directive;
 pub mod error;
+pub mod escalation;
 pub mod ipc;
 pub mod message;
 pub mod model;

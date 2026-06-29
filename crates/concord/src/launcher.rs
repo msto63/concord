@@ -271,6 +271,8 @@ mod tests {
             sessions: PathBuf::new(),
             leases: PathBuf::new(),
             resources: PathBuf::new(),
+            acks: PathBuf::new(),
+            escalations: PathBuf::new(),
             log: PathBuf::new(),
             merge_lock: PathBuf::new(),
             sync: PathBuf::new(),

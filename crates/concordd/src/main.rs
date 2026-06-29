@@ -33,7 +33,7 @@ use concord_core::clock;
 use concord_core::directive::{demux, route};
 #[cfg(unix)]
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
-use concord_core::message::Message;
+use concord_core::message::{Message, MessageKind};
 #[cfg(unix)]
 use concord_core::store::{
     ClaimOutcome, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
@@ -250,9 +250,48 @@ fn run_watch_loop(paths: &Paths) {
             }
             Err(RecvTimeoutError::Timeout) => {
                 catch_up(paths);
+                tick_acks(paths); // F3 active layer: re-deliver / auto-escalate overdue acks
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
+    }
+}
+
+/// F3 daemon active layer: each periodic cycle, re-deliver directives un-ACK'd past the
+/// TTL (bumping the recipient's inbox mtime to wake it) and auto-escalate after K misses.
+/// The spacing/threshold logic lives in [`Store::tick_acks`]; the daemon performs the
+/// inbox append (the wake) for each returned re-delivery.
+fn tick_acks(paths: &Paths) {
+    const TTL_ACK: u64 = 15 * 60; // ≈ one worker tick
+    const K_REDELIVER: u32 = 2; // re-deliver twice, then escalate (severity High)
+    let store = match concord_core::Store::open_at(paths.clone(), clock::now()) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let report = match store.tick_acks(TTL_ACK, K_REDELIVER) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for r in &report.redelivered {
+        let msg = Message {
+            ts: clock::now(),
+            from: "concordd".to_string(),
+            to: r.to.clone(),
+            kind: MessageKind::Note,
+            reference: None,
+            body: format!(
+                "[redelivery] un-ACK'd directive from {} (seq {}) — ACK (`concord ack {}`) or handle it",
+                r.from, r.seq, r.to
+            ),
+        };
+        let _ = append_inbox(paths, &r.to, &msg.to_jsonl());
+    }
+    if !report.redelivered.is_empty() || !report.escalated.is_empty() {
+        eprintln!(
+            "[concordd] ack-tick: {} re-delivered, {} auto-escalated",
+            report.redelivered.len(),
+            report.escalated.len()
+        );
     }
 }
 
@@ -295,6 +334,17 @@ fn catch_up(paths: &Paths) -> usize {
         let msg = Message::from_block(block, recipient, ts);
         if let Err(e) = append_inbox(paths, recipient, &msg.to_jsonl()) {
             eprintln!("[concordd] warn: inbox append for {recipient} failed: {e}");
+        }
+    }
+
+    // F3 ack-tracking: a poster is "caught up" (derived ack ⇒ clear its pending — the A3
+    // watermark mechanized); each routed directive becomes pending an ack for its recipient.
+    if let Ok(store) = concord_core::Store::open_at(paths.clone(), ts) {
+        for b in &blocks {
+            let _ = store.clear_pending(&b.directive.from);
+        }
+        for (recipient, block) in &routed {
+            let _ = store.add_pending(recipient, &block.directive.from);
         }
     }
 

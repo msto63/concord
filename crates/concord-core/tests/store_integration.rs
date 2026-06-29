@@ -5,11 +5,80 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use concord_core::escalation::{EscStatus, ResolveOutcome, Severity};
 use concord_core::store::{
     ClaimOutcome, HoldStatus, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome, ResourceOutcome,
     ResourceReleaseOutcome,
 };
 use concord_core::{Paths, Store};
+
+/// F3/E2: a tracked escalation persists until resolved; `escalations` lists open first.
+#[test]
+fn escalation_lifecycle() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 1000);
+    let e1 = s.escalate("a", "hub", Severity::High, "build-env deadlock", None).unwrap();
+    let e2 = s.escalate("a", "hub", Severity::Critical, "vision blocker", Some("B7.9")).unwrap();
+    assert_eq!((e1, e2), (1, 2));
+
+    let open = s.escalations().unwrap();
+    assert_eq!(open.len(), 2);
+    assert_eq!(open[0].seq, 2, "open, newest first");
+    assert_eq!(open[0].severity, Severity::Critical);
+    assert_eq!(open[0].reference.as_deref(), Some("B7.9"));
+
+    assert_eq!(s.resolve_escalation("hub", 1, "freed").unwrap(), ResolveOutcome::Resolved);
+    assert_eq!(s.resolve_escalation("hub", 1, "again").unwrap(), ResolveOutcome::AlreadyResolved);
+    assert_eq!(s.resolve_escalation("hub", 99, "x").unwrap(), ResolveOutcome::NotFound);
+
+    let after = s.escalations().unwrap();
+    assert_eq!(after[0].seq, 2);
+    assert_eq!(after[0].status, EscStatus::Open);
+    assert_eq!(after[1].status, EscStatus::Resolved);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// F3/E3: a directive becomes pending; an un-ACK'd directive is re-delivered K times then
+/// auto-escalated (severity High); a poster's own post clears its pending (derived ack).
+#[test]
+fn ack_tracking_redeliver_then_auto_escalate() {
+    let (root, paths) = temp_paths();
+    let t0 = 1000u64;
+    let ttl = 900u64; // 15 min
+    let k = 2u32;
+
+    store_at(&paths, t0).add_pending("w", "hub").unwrap();
+    assert_eq!(store_at(&paths, t0).pending_summary().unwrap(), vec![("w".to_string(), 1u32, t0)]);
+
+    // Not yet due (before t0 + ttl): no action.
+    let tick0 = store_at(&paths, t0 + 10).tick_acks(ttl, k).unwrap();
+    assert!(tick0.redelivered.is_empty() && tick0.escalated.is_empty());
+
+    // t0+ttl → first re-delivery; t0+2ttl → second; t0+3ttl → auto-escalate.
+    assert_eq!(store_at(&paths, t0 + ttl).tick_acks(ttl, k).unwrap().redelivered.len(), 1);
+    assert_eq!(store_at(&paths, t0 + 2 * ttl).tick_acks(ttl, k).unwrap().redelivered.len(), 1);
+    let r3 = store_at(&paths, t0 + 3 * ttl).tick_acks(ttl, k).unwrap();
+    assert_eq!(r3.escalated.len(), 1, "auto-escalated after K misses");
+    assert!(r3.redelivered.is_empty());
+
+    // The auto-escalation is High, from concordd, references the un-acking session.
+    let esc = store_at(&paths, t0 + 3 * ttl).escalations().unwrap();
+    assert_eq!(esc.len(), 1);
+    assert_eq!(esc[0].severity, Severity::High);
+    assert_eq!(esc[0].from, "concordd");
+    assert_eq!(esc[0].reference.as_deref(), Some("w"));
+
+    // Further ticks do not re-escalate (pending is marked escalated).
+    let r4 = store_at(&paths, t0 + 9 * ttl).tick_acks(ttl, k).unwrap();
+    assert!(r4.escalated.is_empty() && r4.redelivered.is_empty());
+
+    // Derived ack: once `w` posts (clear_pending), the debt is gone.
+    store_at(&paths, t0 + 9 * ttl).clear_pending("w").unwrap();
+    assert!(store_at(&paths, t0 + 9 * ttl).pending_summary().unwrap().is_empty());
+
+    let _ = std::fs::remove_dir_all(root);
+}
 
 /// F2: an N-slot resource semaphore hands out distinct slots in parallel, reports BUSY
 /// when full, self-heals a stale holder's slot, and is orthogonal to path leases.
@@ -116,6 +185,8 @@ fn temp_paths() -> (PathBuf, Paths) {
         sessions: coord.join("sessions"),
         leases: coord.join("leases"),
         resources: coord.join("resources"),
+        acks: coord.join("acks"),
+        escalations: coord.join("escalations"),
         log: coord.join("intents.jsonl"),
         merge_lock: coord.join("merge.lock"),
         coord: coord.clone(),
