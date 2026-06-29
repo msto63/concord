@@ -8,6 +8,10 @@ AGENTS.md
 *-coord/
 *-SESSION-SYNC.md
 
+# Local archive of retired material (e.g. the original shell tools, frozen after the
+# Rust migration completed). Kept on disk for reference, never published to GitHub.
+.archive/
+
 # OS / editor noise
 .DS_Store
 *.swp
