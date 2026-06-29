@@ -424,6 +424,9 @@ impl Store {
         Ok(Some(MergeLock {
             holder: read_trimmed(&dir.join("holder")).unwrap_or_else(|| "?".into()),
             since: read_trimmed(&dir.join("since")).unwrap_or_default(),
+            fence: read_trimmed(&dir.join("fence"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0),
         }))
     }
 

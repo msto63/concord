@@ -110,11 +110,13 @@ pub struct Lease {
     pub fence: u64,
 }
 
-/// The singleton merge gate. On disk: `merge.lock/` dir with `holder`/`since`.
+/// The singleton merge gate. On disk: `merge.lock/` dir with `holder`/`since`/`fence`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeLock {
     pub holder: String,
     pub since: String,
+    /// Fencing token stamped at acquisition (0 if absent, e.g. shell-created).
+    pub fence: u64,
 }
 
 /// One append-only ledger record in `intents.jsonl`.

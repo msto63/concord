@@ -19,8 +19,11 @@
 //! Exit codes match the shell: claim CONFLICT and merge-lock-held ⇒ 2; unknown
 //! command ⇒ 1; missing required arg ⇒ 1.
 
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
+use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::store::{
     ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
     StatusReport, Store,
@@ -142,6 +145,31 @@ fn run(args: &[String]) -> Result<ExitCode> {
         "merge-lock" => {
             let id = require(rest, 0, "session id")?;
             let why = opt(rest, 1).unwrap_or("");
+            // Strong tier: route through the daemon when it is up (atomic check-and-
+            // apply at the single serialization point); otherwise the Floor (direct FS).
+            if let Some(resp) = mediate(
+                &store,
+                Request::MergeLock {
+                    id: id.to_string(),
+                    why: why.to_string(),
+                },
+            ) {
+                match resp {
+                    Response::Acquired { .. } => {
+                        println!("MERGE LOCK acquired");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::Reacquired { .. } => {
+                        println!("MERGE LOCK (re)acquired");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::Held { holder } => {
+                        println!("MERGE LOCK held by '{holder}' — wait until released");
+                        return Ok(ExitCode::from(2));
+                    }
+                    _ => {} // unexpected → fall through to the Floor
+                }
+            }
             match store.merge_lock(id, why)? {
                 MergeLockOutcome::Acquired => {
                     println!("MERGE LOCK acquired");
@@ -160,6 +188,25 @@ fn run(args: &[String]) -> Result<ExitCode> {
 
         "merge-unlock" => {
             let id = require(rest, 0, "session id")?;
+            if let Some(resp) = mediate(&store, Request::MergeUnlock { id: id.to_string() }) {
+                match resp {
+                    Response::Released => {
+                        println!("merge lock released");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::NotHeld => {
+                        println!("merge lock not held");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::NotYours { holder } => {
+                        println!(
+                            "REFUSED: merge lock held by '{holder}', not '{id}' — not unlocking"
+                        );
+                        return Ok(ExitCode::from(2));
+                    }
+                    _ => {} // unexpected → fall through to the Floor
+                }
+            }
             match store.merge_unlock(id)? {
                 MergeUnlockOutcome::Released => {
                     println!("merge lock released");
@@ -305,6 +352,32 @@ fn require<'a>(rest: &'a [String], idx: usize, label: &'static str) -> Result<&'
 /// The positional arg at `idx`, or `None`.
 fn opt(rest: &[String], idx: usize) -> Option<&str> {
     rest.get(idx).map(String::as_str)
+}
+
+/// Try to route a consequential request through the daemon (Strong tier). Returns
+/// `Some(response)` when the daemon is reachable and answered with a usable verdict;
+/// `None` when there is no daemon, the connection failed, or it returned an error — in
+/// all of which the caller falls back to the Floor (direct FS). `CONCORD_NO_DAEMON=1`
+/// forces the Floor unconditionally.
+fn mediate(store: &Store, req: Request) -> Option<Response> {
+    if matches!(
+        std::env::var("CONCORD_NO_DAEMON").ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    ) {
+        return None;
+    }
+    let sock = store.paths().coord.join(SOCKET_NAME);
+    if !sock.exists() {
+        return None;
+    }
+    let mut stream = UnixStream::connect(&sock).ok()?;
+    writeln!(stream, "{}", req.to_line()).ok()?;
+    let mut line = String::new();
+    BufReader::new(&stream).read_line(&mut line).ok()?;
+    match Response::parse_line(&line) {
+        Some(Response::Err(_)) | None => None, // daemon hiccup → fall back to Floor
+        other => other,
+    }
 }
 
 /// The value following `flag` (e.g. `--fence 7` ⇒ `Some("7")`), or `None`.

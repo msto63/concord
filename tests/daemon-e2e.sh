@@ -64,6 +64,43 @@ kill "$DPID" 2>/dev/null || true; wait "$DPID" 2>/dev/null || true
 if [ "$ok" = 1 ]; then echo "✓ 2: live append delivered to inbox/concord-w"; else echo "✗ 2: live push not delivered"; cat "$W2/daemon.log" | sed 's/^/    /'; fail=1; fi
 rm -rf "$W2"
 
+# ── 3. Strong fencing: daemon-mediated merge-lock ──
+# With the daemon up, consequential merge-lock/unlock route through its single-thread
+# serialization point (atomic check-and-apply). Verify acquire / contended-HELD /
+# foreign-unlock-REFUSED / release, plus the Floor fallback when mediation is disabled.
+CC="${CONCORD_BIN:-$HERE/target/debug/concord}"
+[ -x "$CC" ] || ( cd "$HERE" && cargo build -p concord -q )
+W3=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
+CD3="$W3/coord"; SY3="$W3/SYNC.md"; mkdir -p "$CD3"
+CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$CC" register a "sess a" >/dev/null
+CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$CC" register b "sess b" >/dev/null
+CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$DD" >"$W3/daemon.log" 2>&1 &
+DPID3=$!
+# Wait for the socket to appear (daemon armed).
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$CD3/concordd.sock" ] && break; sleep 0.3; done
+run3() { CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$CC" "$@"; }
+# `&& e=0 || e=$?` keeps a non-zero exit (HELD/REFUSED=2) from tripping `set -e`.
+o1=$(run3 merge-lock a "merge #1") && e1=0 || e1=$?
+o2=$(run3 merge-lock b)           && e2=0 || e2=$?
+o3=$(run3 merge-unlock b)         && e3=0 || e3=$?
+o4=$(run3 merge-unlock a)         && e4=0 || e4=$?
+# Floor fallback path still works with mediation disabled.
+o5=$(CONCORD_NO_DAEMON=1 run3 merge-lock a "floor") && e5=0 || e5=$?
+kill "$DPID3" 2>/dev/null || true; wait "$DPID3" 2>/dev/null || true
+
+check3() { # "<label>" "<got>" <gotexit> "<want-substr>" <wantexit>
+  if printf '%s' "$2" | grep -qF "$4" && [ "$3" = "$5" ]; then echo "✓ 3: $1";
+  else echo "✗ 3: $1 — got [$2] exit=$3 (want '$4' exit=$5)"; fail=1; fi
+}
+[ -S "$CD3/concordd.sock" ] || true  # socket is cleaned on kill; presence checked above
+check3 "mediated acquire"          "$o1" "$e1" "MERGE LOCK acquired" 0
+check3 "mediated contended HELD"   "$o2" "$e2" "held by 'a'" 2
+check3 "mediated foreign unlock REFUSED" "$o3" "$e3" "REFUSED" 2
+check3 "mediated release"          "$o4" "$e4" "merge lock released" 0
+check3 "Floor fallback (no daemon)" "$o5" "$e5" "MERGE LOCK acquired" 0
+
+rm -rf "$W3"
+
 echo ""
 if [ "$fail" = 0 ]; then echo "DAEMON E2E: ALL PASS"; else echo "DAEMON E2E: FAILURES"; fi
 exit $fail

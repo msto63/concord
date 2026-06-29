@@ -20,13 +20,16 @@
 //! renames surface on the target path, one logical write debounces to one batch).
 
 use std::fs;
-use std::io::Write as _;
+use std::io::{BufRead, BufReader, Write as _};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::Duration;
 
 use concord_core::directive::{demux, route};
-use concord_core::Paths;
+use concord_core::ipc::{Request, Response, SOCKET_NAME};
+use concord_core::store::{MergeLockOutcome, MergeUnlockOutcome};
+use concord_core::{Paths, Store};
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 
@@ -49,7 +52,110 @@ fn main() {
     // Catch up anything appended between offset-init and the watcher arming.
     catch_up(&paths);
 
+    // M2.3 Strong: the mediation socket — the single serialization point for
+    // consequential writes (merge-lock/unlock). Runs in its own thread, serving
+    // requests SERIALLY so check-and-apply is atomic (closes the Floor's TOCTOU
+    // window). The watch loop owns the main thread.
+    {
+        let p = paths.clone();
+        std::thread::spawn(move || run_socket_server(&p));
+    }
+
     run_watch_loop(&paths);
+}
+
+// ─────────────────────────── mediation socket (M2.3) ───────────────────────────
+
+fn socket_path(paths: &Paths) -> PathBuf {
+    paths.coord.join(SOCKET_NAME)
+}
+
+/// Serve mediated requests on the Unix socket, one connection at a time (serial — the
+/// single serialization point). Each request is dispatched to a fresh [`Store`] (so
+/// the timestamp is current) and answered with one response line.
+fn run_socket_server(paths: &Paths) {
+    let path = socket_path(paths);
+    let _ = fs::create_dir_all(&paths.coord);
+    // Remove a stale socket from a previous run (bind fails if the path exists).
+    let _ = fs::remove_file(&path);
+    let listener = match UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[concordd] warn: cannot bind socket {}: {e}", path.display());
+            return;
+        }
+    };
+    eprintln!("[concordd] mediation socket at {}", path.display());
+
+    for conn in listener.incoming() {
+        match conn {
+            Ok(stream) => handle_conn(paths, stream),
+            Err(e) => eprintln!("[concordd] socket accept error: {e}"),
+        }
+    }
+}
+
+/// Handle one connection: read a request line, apply it, write a response line.
+fn handle_conn(paths: &Paths, stream: UnixStream) {
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
+    });
+    let mut line = String::new();
+    if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+        return;
+    }
+    let resp = match Request::parse_line(&line) {
+        Some(req) => apply(paths, req),
+        None => Response::Err("malformed request".to_string()),
+    };
+    let mut w = stream;
+    let _ = writeln!(w, "{}", resp.to_line());
+}
+
+/// Apply a mediated request against the store — the atomic check-and-apply.
+fn apply(paths: &Paths, req: Request) -> Response {
+    match req {
+        Request::Ping => Response::Pong,
+        Request::MergeLock { id, why } => {
+            let store = match Store::open(paths.clone()) {
+                Ok(s) => s,
+                Err(e) => return Response::Err(e.to_string()),
+            };
+            match store.merge_lock(&id, &why) {
+                Ok(MergeLockOutcome::Acquired) => Response::Acquired {
+                    fence: merge_fence(&store),
+                },
+                Ok(MergeLockOutcome::Reacquired) => Response::Reacquired {
+                    fence: merge_fence(&store),
+                },
+                Ok(MergeLockOutcome::Held { holder }) => Response::Held { holder },
+                Err(e) => Response::Err(e.to_string()),
+            }
+        }
+        Request::MergeUnlock { id } => {
+            let store = match Store::open(paths.clone()) {
+                Ok(s) => s,
+                Err(e) => return Response::Err(e.to_string()),
+            };
+            match store.merge_unlock(&id) {
+                Ok(MergeUnlockOutcome::Released) => Response::Released,
+                Ok(MergeUnlockOutcome::NotHeld) => Response::NotHeld,
+                Ok(MergeUnlockOutcome::NotYours { holder }) => Response::NotYours { holder },
+                Err(e) => Response::Err(e.to_string()),
+            }
+        }
+    }
+}
+
+/// The fence currently stamped on the merge lock (0 if unreadable).
+fn merge_fence(store: &Store) -> u64 {
+    store
+        .read_merge_lock()
+        .ok()
+        .flatten()
+        .map(|ml| ml.fence)
+        .unwrap_or(0)
 }
 
 // ───────────────────────────── watch loop ─────────────────────────────
