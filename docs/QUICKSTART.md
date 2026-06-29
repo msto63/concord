@@ -73,4 +73,4 @@ crash never corrupts coordination.
 - **Worktrees** — give each session its own `git worktree` (`<repo>-<id>`) for parallel
   isolation on top of the shared coordination.
 - **Multiple projects / dogfood** — one binary coordinates many repos, each isolated by
-  its own coord dir. See [`DOGFOOD-RUNBOOK.md`](DOGFOOD-RUNBOOK.md).
+  its own coord dir.

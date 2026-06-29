@@ -9,16 +9,20 @@ filesystem, plus Claude Code hooks. Keep it that way.
 - **Project-agnostic.** Never hardcode a path. Read `CONCORD_DIR` / `CONCORD_SYNC` /
   `CONCORD_PROJECT` from the environment, else derive `<repo>-coord` / `<repo>-SESSION-SYNC.md`
   by convention.
-- **Docs in English, kept in sync.** A behavioural change updates `README.md`, `docs/MANUAL.md`,
-  and — if it shifts direction — `docs/ROADMAP.md` + `docs/BACKLOG.md`.
+- **Docs in English, kept in sync.** A behavioural change updates `README.md` and `docs/MANUAL.md`
+  in the same change.
 - **Dogfood.** Where practical, coordinate Concord's own development with Concord.
 
 ## Workflow
 
-1. Pick (or file) a task in [docs/BACKLOG.md](docs/BACKLOG.md).
+1. Pick up (or file) an issue on GitHub.
 2. Branch, make the change, run `bash -n` on any script you touch.
 3. Update the relevant docs in the same change.
-4. Open a PR describing what changed and which backlog item it advances.
+4. Open a PR describing what changed and which issue it advances.
+
+**Tests.** CI runs the Rust unit/integration tests plus a set of shell smoke tests in
+`tests/`. Some are local/manual (they need a built daemon or a network) and are not in CI —
+run them directly, e.g. `bash tests/dogfood-smoke.sh` or `bash tests/multiproject.sh`.
 
 ## Code style
 
@@ -52,6 +56,5 @@ in `.git/`, which is not shared, so each clone installs its own).
 
 ## Scope
 
-Bug fixes, portability improvements, documentation, and roadmap items (see
-[docs/ROADMAP.md](docs/ROADMAP.md)) are all welcome. For larger changes, open an issue first so we
-can agree on the approach.
+Bug fixes, portability improvements, documentation, and roadmap items (see the open issues)
+are all welcome. For larger changes, open an issue first so we can agree on the approach.

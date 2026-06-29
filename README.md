@@ -146,9 +146,6 @@ next to your repo; the human-readable discussion log is `<repo>-SESSION-SYNC.md`
 |---|---|
 | **[docs/MANUAL.md](docs/MANUAL.md)** | Full reference: the model, every command, the hooks, configuration, and ready-made prompts. |
 | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** | A short, worked setup. |
-| **[docs/ROADMAP.md](docs/ROADMAP.md)** | Direction and planned capabilities. |
-| **[docs/BACKLOG.md](docs/BACKLOG.md)** | Actionable work and its status. |
-| **[docs/adr/](docs/adr/)** | Architecture Decision Records — the durable rationale behind the design. |
 
 ## Status
 
