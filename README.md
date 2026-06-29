@@ -188,10 +188,21 @@ CONTRACT BROKEN: src/lib.rs:foo
 1 contract(s) changed without renegotiation — re-agree with the counter-party, then `concord contract <id> <key> --update` (or `contract-release`).
 ```
 
-**4. Only one session merges at a time.** The merge lock is a singleton — `hub` holds it,
-everyone else waits:
+**4. A broken contract blocks the merge itself — and only one session merges at a time.**
+`foo`'s signature is still broken from step 3. The merge lock is a singleton (only one session
+merges at a time), and it refuses to hand out while a contract is broken — so a broken API
+can't sneak through the merge gate. Restore the signature and it's granted; a second session
+then has to wait:
 
 ```console
+# foo's signature is still broken from step 3
+$ concord merge-lock hub "cut release"
+CONTRACT BROKEN: src/lib.rs:foo
+  agreed:  pub fn foo() -> u32
+  current: pub fn foo(n: u32) -> u32
+merge-lock refused: 1 broken contract(s) — renegotiate + `contract --update`, or override with --no-contract-check.
+
+# put foo's signature back to `pub fn foo() -> u32`, then retry
 $ concord merge-lock hub "cut release"
 MERGE LOCK acquired
 $ concord merge-lock b "cut release"
