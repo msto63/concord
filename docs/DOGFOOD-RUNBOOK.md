@@ -71,10 +71,37 @@ back instantly without losing state:
 
 Both operate on the same `concord-coord/`.
 
+## Moving Concord's own dev onto `concord-coord` (the channel handover)
+
+The dedicated dogfood state has been scaffolded (additive; `ais-coord` untouched):
+
+- `~/Projects/concord-coord/` — sessions, leases, ledger (sessions `hub`, `w` registered)
+- `~/Projects/concord-SESSION-SYNC.md` — the dedicated prose channel for Concord's own dev
+- `~/Projects/concord-coord/hooks/` — the deployed hooks for these sessions
+
+To actually move Concord's development off the shared `ais-SESSION-SYNC.md` onto its own
+channel, the **operator** does two things (the session move is operator-run so live work
+is never cut mid-flight):
+
+1. **Launch the concord-dev sessions in the concord repo.** A session started **in
+   `~/Projects/concord`** derives `concord-coord` + `concord-SESSION-SYNC.md` by the
+   sibling convention and uses the Rust binary via `lib.sh`. Use `bin/concord start <id>`
+   (it exports `CONCORD_DIR=concord-coord`), or set the env yourself. Restart the
+   concord-dev session(s) — e.g. `concord-w` → a fresh session against `concord-coord`.
+2. **Point the coordinator at the new channel.** `hub` must now **watch
+   `concord-SESSION-SYNC.md`** (the Monitor target) to keep coordinating Concord's work —
+   the channel handover from `ais-SESSION-SYNC.md`. Past directives stay in the ais channel
+   as history; new Concord-dev coordination flows on `concord-SESSION-SYNC.md`.
+
+**Why this matters (the structural fix).** While a concord-dev session runs against the
+shared `ais-coord` (its ambient `CONCORD_DIR=…ais-coord`), any stray tool call writes to
+ais-coord — the env-override hazard behind the two prep incidents. Once the session runs
+against `concord-coord`, its ambient coord dir *is* `concord-coord`, so the hazard is gone
+**by construction**, not by discipline.
+
 ## Out of scope (future operator decisions)
 
-- **ais stays on the shell tool.** Migrating the live `ais-coord` hooks to the Rust binary
-  (e.g. a global `cargo install concord` covering every project) is **WP6** — a separate
-  decision to make only after the concord-coord dogfood has proven itself.
-- M4 (cross-platform/distribution) and M6 (Concord-on-ais) are likewise separate
-  (ADR-0002 scope).
+- **WP6 done — ais now runs on the Rust tool** (deployed `ais-coord/hooks/lib.sh`
+  `COORD_SH`→Rust binary, reversible via `scripts/wp6-ais-cutover.sh --rollback`). The
+  session-launcher (`concord`) staying shell vs. Rust is a separate, smaller follow-up.
+- M4 (cross-platform/distribution) and M6 (Concord-on-ais) are separate (ADR-0002 scope).
