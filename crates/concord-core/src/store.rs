@@ -127,10 +127,43 @@ pub enum LeaseCheck {
 pub struct SessionEndReport {
     /// Areas whose leases were released (held by the ending session).
     pub released: Vec<String>,
+    /// Resource slots (`<name>#<slot>`) released (F2; the A2 composition AUFLAGE).
+    pub resources_released: Vec<String>,
     /// Whether the ending session held — and thus released — the merge-lock.
     pub merge_unlocked: bool,
     /// Whether a registry entry existed and was removed.
     pub deregistered: bool,
+}
+
+/// The outcome of acquiring a slot of a named resource (F2 semaphore).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceOutcome {
+    /// Acquired free slot `slot` of `capacity`.
+    Acquired { slot: u32, capacity: u32, fence: u64 },
+    /// Reclaimed slot `slot` from a stale holder (the pool self-heals after a crash).
+    Reclaimed { slot: u32, capacity: u32, previous: String },
+    /// The caller already holds slot `slot` (idempotent).
+    AlreadyHeld { slot: u32 },
+    /// Every slot is held by a live session — the pool is exhausted.
+    Busy { capacity: u32 },
+    /// The requested capacity disagrees with the persisted one for this resource.
+    CapacityMismatch { declared: u32 },
+}
+
+/// The outcome of releasing a caller's slot of a named resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceReleaseOutcome {
+    Released { slot: u32 },
+    NotHeld,
+}
+
+/// A snapshot of one named resource for `status`: its capacity and the held slots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceLock {
+    pub name: String,
+    pub capacity: u32,
+    /// `(slot, holder)` for each currently-held (live) slot, sorted by slot.
+    pub held: Vec<(u32, String)>,
 }
 
 /// The coordination store, bound to a resolved [`Paths`] and a fixed `now`.
@@ -475,13 +508,137 @@ impl Store {
     /// session still appears to hold authority (complements TTL-stale-reclaim).
     pub fn session_end(&self, id: &str) -> Result<SessionEndReport> {
         let released = self.release_all(id)?;
+        let resources_released = self.release_all_resources(id)?;
         let merge_unlocked = matches!(self.merge_unlock(id)?, MergeUnlockOutcome::Released);
         let deregistered = self.deregister(id)?;
         Ok(SessionEndReport {
             released,
+            resources_released,
             merge_unlocked,
             deregistered,
         })
+    }
+
+    // ───────────────────── named resource locks / build-slots (F2) ─────────────────────
+
+    /// Acquire one slot of a named, N-slot resource semaphore (F2): a lock on a
+    /// *non-file* resource (a port, the build-env, a deploy) in a namespace that is
+    /// structurally orthogonal to the path/symbol leases (`<coord>/resources/`, never
+    /// touched by `area_overlaps`). `slots` is the capacity (1 = exclusive). The first
+    /// free slot `0..slots` is taken by an atomic `mkdir` (race-safe — a colliding mkdir
+    /// just falls through to the next slot); a slot held by a *stale* session is reclaimed,
+    /// so the pool self-heals after a crash (the documented `ais` QEMU-port / build-env
+    /// contention). The capacity is persisted on first acquire and validated thereafter.
+    pub fn acquire_resource(
+        &self,
+        id: &str,
+        name: &str,
+        slots: u32,
+        why: &str,
+    ) -> Result<ResourceOutcome> {
+        let slots = slots.max(1);
+        let dir = self.paths.resource_dir(name);
+        mkdirs(&dir)?;
+        // Persist capacity on first acquire; validate on later ones.
+        let cap_file = self.paths.resource_capacity_file(name);
+        let capacity = match read_trimmed(&cap_file).and_then(|s| s.parse::<u32>().ok()) {
+            Some(existing) => {
+                if existing != slots {
+                    return Ok(ResourceOutcome::CapacityMismatch { declared: existing });
+                }
+                existing
+            }
+            None => {
+                self.write_atomic(&cap_file, &format!("{slots}\n"))?;
+                slots
+            }
+        };
+
+        for i in 0..capacity {
+            let slot = self.paths.resource_slot_dir(name, i);
+            match fs::create_dir_all(slot.parent().unwrap()).and_then(|_| fs::create_dir(&slot)) {
+                Ok(()) => {
+                    let fence = self.append_log(id, &format!("resource-acquire: {name}#{i} ({why})"))?;
+                    self.write_lease_fields(&slot, id, &format!("{name}#{i}"), why, fence)?;
+                    return Ok(ResourceOutcome::Acquired { slot: i, capacity, fence });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let holder = read_trimmed(&slot.join("holder")).unwrap_or_default();
+                    if holder == id {
+                        return Ok(ResourceOutcome::AlreadyHeld { slot: i });
+                    }
+                    if self.holder_stale(&holder)? {
+                        let fence = self
+                            .append_log(id, &format!("resource-reclaim: {name}#{i} (was {holder})"))?;
+                        self.write_lease_fields(&slot, id, &format!("{name}#{i}"), why, fence)?;
+                        return Ok(ResourceOutcome::Reclaimed { slot: i, capacity, previous: holder });
+                    }
+                    // Live holder — try the next slot.
+                }
+                Err(e) => return Err(ConcordError::io(&slot, e)),
+            }
+        }
+        Ok(ResourceOutcome::Busy { capacity })
+    }
+
+    /// Release the caller's slot of a named resource. Ownership-enforced: only a slot
+    /// whose holder is `id` is removed.
+    pub fn release_resource(&self, id: &str, name: &str) -> Result<ResourceReleaseOutcome> {
+        let slots = self.paths.resource_dir(name).join("slots");
+        for entry in sorted_entries(&slots)? {
+            let dir = slots.join(&entry);
+            if read_trimmed(&dir.join("holder")).as_deref() == Some(id) {
+                fs::remove_dir_all(&dir).map_err(|e| ConcordError::io(&dir, e))?;
+                let slot = entry.parse::<u32>().unwrap_or(0);
+                self.append_log(id, &format!("resource-release: {name}#{slot}"))?;
+                return Ok(ResourceReleaseOutcome::Released { slot });
+            }
+        }
+        Ok(ResourceReleaseOutcome::NotHeld)
+    }
+
+    /// Release every resource slot held by `id` (the F1/A2 SessionEnd composition AUFLAGE:
+    /// a crashed/finished session auto-frees its ports / build-env). Returns the freed
+    /// `<name>#<slot>` keys.
+    pub fn release_all_resources(&self, id: &str) -> Result<Vec<String>> {
+        let mut freed = Vec::new();
+        for name_slug in sorted_entries(&self.paths.resources)? {
+            let slots = self.paths.resources.join(&name_slug).join("slots");
+            for entry in sorted_entries(&slots)? {
+                let dir = slots.join(&entry);
+                if read_trimmed(&dir.join("holder")).as_deref() == Some(id) {
+                    fs::remove_dir_all(&dir).map_err(|e| ConcordError::io(&dir, e))?;
+                    freed.push(format!("{name_slug}#{entry}"));
+                    self.append_log(id, &format!("resource-release: {name_slug}#{entry}"))?;
+                }
+            }
+        }
+        Ok(freed)
+    }
+
+    /// Snapshot all named resources for `status`: capacity + the live held slots.
+    pub fn resource_locks(&self) -> Result<Vec<ResourceLock>> {
+        let mut out = Vec::new();
+        for name_slug in sorted_entries(&self.paths.resources)? {
+            let rdir = self.paths.resources.join(&name_slug);
+            let capacity = read_trimmed(&rdir.join("capacity"))
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            let mut held = Vec::new();
+            for entry in sorted_entries(&rdir.join("slots"))? {
+                let dir = rdir.join("slots").join(&entry);
+                let holder = read_trimmed(&dir.join("holder")).unwrap_or_default();
+                if holder.is_empty() || self.holder_stale(&holder)? {
+                    continue;
+                }
+                held.push((entry.parse::<u32>().unwrap_or(0), holder));
+            }
+            if capacity > 0 || !held.is_empty() {
+                held.sort_by_key(|(s, _)| *s);
+                out.push(ResourceLock { name: name_slug, capacity, held });
+            }
+        }
+        Ok(out)
     }
 
     // ──────────────────────────────── log / sync ────────────────────────────────

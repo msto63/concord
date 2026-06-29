@@ -6,9 +6,71 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use concord_core::store::{
-    ClaimOutcome, HoldStatus, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
+    ClaimOutcome, HoldStatus, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome, ResourceOutcome,
+    ResourceReleaseOutcome,
 };
 use concord_core::{Paths, Store};
+
+/// F2: an N-slot resource semaphore hands out distinct slots in parallel, reports BUSY
+/// when full, self-heals a stale holder's slot, and is orthogonal to path leases.
+#[test]
+fn resource_semaphore_slots_busy_and_self_heal() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 1000);
+    s.register("a", "").unwrap();
+    s.register("b", "").unwrap();
+    s.register("c", "").unwrap();
+
+    // Capacity 2: a and b each get a distinct slot; c finds the pool full.
+    match s.acquire_resource("a", "qemu-port", 2, "vm").unwrap() {
+        ResourceOutcome::Acquired { slot, capacity, .. } => { assert_eq!((slot, capacity), (0, 2)); }
+        o => panic!("a should get slot 0: {o:?}"),
+    }
+    match s.acquire_resource("b", "qemu-port", 2, "vm").unwrap() {
+        ResourceOutcome::Acquired { slot, .. } => assert_eq!(slot, 1),
+        o => panic!("b should get slot 1: {o:?}"),
+    }
+    assert_eq!(s.acquire_resource("c", "qemu-port", 2, "vm").unwrap(), ResourceOutcome::Busy { capacity: 2 });
+
+    // Idempotent: a re-acquiring returns its existing slot.
+    assert_eq!(s.acquire_resource("a", "qemu-port", 2, "vm").unwrap(), ResourceOutcome::AlreadyHeld { slot: 0 });
+    // Capacity validation: a mismatched --slots is rejected.
+    assert_eq!(s.acquire_resource("c", "qemu-port", 5, "vm").unwrap(), ResourceOutcome::CapacityMismatch { declared: 2 });
+
+    // a goes stale (heartbeat far in the past) → c reclaims a's slot (pool self-heals).
+    let later = store_at(&paths, 1000 + 4000); // > TTL (1800)
+    match later.acquire_resource("c", "qemu-port", 2, "vm").unwrap() {
+        ResourceOutcome::Reclaimed { slot, previous, .. } => { assert_eq!(slot, 0); assert_eq!(previous, "a"); }
+        o => panic!("c should reclaim a's stale slot 0: {o:?}"),
+    }
+
+    // Orthogonal to path leases: a file lease named like the resource does not conflict.
+    assert_eq!(later.claim("b", "qemu-port", "", OverlapPolicy::RejectOverlap).unwrap(), ClaimOutcome::Claimed);
+
+    // Release returns the slot; a second release reports NotHeld.
+    assert_eq!(later.release_resource("b", "qemu-port").unwrap(), ResourceReleaseOutcome::Released { slot: 1 });
+    assert_eq!(later.release_resource("b", "qemu-port").unwrap(), ResourceReleaseOutcome::NotHeld);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// F2 + F1/A2: SessionEnd teardown also frees the session's resource slots (the AUFLAGE).
+#[test]
+fn session_end_releases_resource_slots() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 1000);
+    s.register("a", "").unwrap();
+    s.acquire_resource("a", "build-env", 1, "build").unwrap();
+    s.acquire_resource("a", "qemu-port", 4, "vm").unwrap();
+
+    let r = s.session_end("a").unwrap();
+    assert_eq!(r.resources_released.len(), 2, "both resource slots freed: {:?}", r.resources_released);
+    // The pool is now empty — a fresh session takes slot 0 of each.
+    s.register("b", "").unwrap();
+    assert!(matches!(s.acquire_resource("b", "build-env", 1, "build").unwrap(), ResourceOutcome::Acquired { slot: 0, .. }));
+
+    let _ = std::fs::remove_dir_all(root);
+}
 
 /// F1/A2: clean-exit teardown releases the ending session's leases + merge-lock and
 /// deregisters it, leaves other sessions untouched, and is idempotent.
@@ -53,6 +115,7 @@ fn temp_paths() -> (PathBuf, Paths) {
     let paths = Paths {
         sessions: coord.join("sessions"),
         leases: coord.join("leases"),
+        resources: coord.join("resources"),
         log: coord.join("intents.jsonl"),
         merge_lock: coord.join("merge.lock"),
         coord: coord.clone(),

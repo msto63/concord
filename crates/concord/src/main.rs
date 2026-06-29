@@ -28,7 +28,7 @@ use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::{Message, MessageKind};
 use concord_core::store::{
     ClaimOutcome, HoldStatus, LeaseCheck, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy,
-    ReleaseOutcome, StatusReport, Store,
+    ReleaseOutcome, ResourceOutcome, ResourceReleaseOutcome, StatusReport, Store,
 };
 use concord_core::{Paths, Result};
 
@@ -79,12 +79,23 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // if held, and deregister. Idempotent; driven by the SessionEnd hook.
             let id = require(rest, 0, "session id")?;
             let r = store.session_end(id)?;
-            if r.released.is_empty() && !r.merge_unlocked && !r.deregistered {
+            if r.released.is_empty()
+                && r.resources_released.is_empty()
+                && !r.merge_unlocked
+                && !r.deregistered
+            {
                 println!("session-end {id}: nothing to release (already clean)");
             } else {
                 let mut parts = Vec::new();
                 if !r.released.is_empty() {
                     parts.push(format!("released {}: {}", r.released.len(), r.released.join(", ")));
+                }
+                if !r.resources_released.is_empty() {
+                    parts.push(format!(
+                        "resources {}: {}",
+                        r.resources_released.len(),
+                        r.resources_released.join(", ")
+                    ));
                 }
                 if r.merge_unlocked {
                     parts.push("merge-unlock".to_string());
@@ -206,6 +217,56 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // binary set up session automation with no repo checkout.
             let wire = !has_flag(rest, "--no-wire");
             Ok(hooks_embed::cmd_install_hooks(store.paths(), wire))
+        }
+
+        "claim" if is_resource(rest) => {
+            // F2: claim a slot of a named resource semaphore (orthogonal namespace).
+            //   concord claim <id> <name> --kind resource [--slots N] [why]
+            let pos = positional_args(rest, &["--kind", "--slots"]);
+            let id = pos.first().map(String::as_str).ok_or(missing("session id"))?;
+            let name = pos.get(1).map(String::as_str).ok_or(missing("resource name"))?;
+            let why = pos.get(2).map(String::as_str).unwrap_or("");
+            let slots: u32 = flag_value(rest, "--slots").and_then(|s| s.parse().ok()).unwrap_or(1);
+            match store.acquire_resource(id, name, slots, why)? {
+                ResourceOutcome::Acquired { slot, capacity, fence } => {
+                    println!("RESOURCE-ACQUIRED {name} slot {slot}/{capacity} (fence {fence})");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ResourceOutcome::Reclaimed { slot, capacity, previous } => {
+                    println!("RESOURCE-RECLAIMED {name} slot {slot}/{capacity} (stale holder {previous})");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ResourceOutcome::AlreadyHeld { slot } => {
+                    println!("already holding {name} slot {slot}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ResourceOutcome::Busy { capacity } => {
+                    println!("RESOURCE-BUSY {name} ({capacity}/{capacity} slots held) — coordinate first (status / SESSION-SYNC)");
+                    Ok(ExitCode::from(2))
+                }
+                ResourceOutcome::CapacityMismatch { declared } => {
+                    println!("RESOURCE-CAPACITY-MISMATCH {name}: declared capacity is {declared} — retry with --slots {declared}");
+                    Ok(ExitCode::from(2))
+                }
+            }
+        }
+
+        "release" if is_resource(rest) => {
+            // F2: release the caller's slot of a named resource.
+            //   concord release <id> <name> --kind resource
+            let pos = positional_args(rest, &["--kind", "--slots"]);
+            let id = pos.first().map(String::as_str).ok_or(missing("session id"))?;
+            let name = pos.get(1).map(String::as_str).ok_or(missing("resource name"))?;
+            match store.release_resource(id, name)? {
+                ResourceReleaseOutcome::Released { slot } => {
+                    println!("RESOURCE-RELEASED {name} slot {slot}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ResourceReleaseOutcome::NotHeld => {
+                    println!("not holding {name}");
+                    Ok(ExitCode::SUCCESS)
+                }
+            }
         }
 
         "claim" => {
@@ -566,6 +627,30 @@ fn print_status(store: &Store) -> Result<()> {
     if let Some(holder) = &r.merge_lock_holder {
         println!("MERGE LOCK: held by {holder}");
     }
+    // F2: named resource locks / build-slots (only when any exist, to keep the common
+    // status output unchanged).
+    let resources = store.resource_locks()?;
+    if !resources.is_empty() {
+        println!("RESOURCE LOCKS:");
+        for r in &resources {
+            let holders = if r.held.is_empty() {
+                "free".to_string()
+            } else {
+                r.held
+                    .iter()
+                    .map(|(s, h)| format!("#{s}={h}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            println!(
+                "  {:<28} {}/{} slots — {}",
+                r.name,
+                r.held.len(),
+                r.capacity,
+                holders
+            );
+        }
+    }
     Ok(())
 }
 
@@ -683,6 +768,16 @@ fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
 /// True if a bare `--flag` is present anywhere in `rest`.
 fn has_flag(rest: &[String], flag: &str) -> bool {
     rest.iter().any(|a| a == flag)
+}
+
+/// True if `--kind resource` selects the F2 resource-semaphore namespace.
+fn is_resource(rest: &[String]) -> bool {
+    flag_value(rest, "--kind") == Some("resource")
+}
+
+/// The same missing-argument error `require` produces, for hand-parsed verbs.
+fn missing(label: &'static str) -> concord_core::ConcordError {
+    concord_core::ConcordError::MissingArg(label)
 }
 
 /// Positional args, skipping `--flag value` pairs named in `value_flags` and any other

@@ -11,6 +11,36 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-29
+
+Wave 2 — F2: named resource locks / build-slots. The enforced lease primitive now
+covers *non-file* resources (ports, the build-env, deploys) with N-slot semaphore
+semantics — solving the documented `ais` contention (QEMU ports, build-env singleton,
+mutual QEMU-killing). (ADR-0003 F2.)
+
+### Added
+- **`kind=resource` semaphore namespace.** A new `<coord>/resources/` store, structurally
+  **orthogonal** to the path/symbol leases (it never touches the overlap logic, so a
+  resource and a file of the same name never collide). Each resource is an N-slot
+  semaphore: `Store::acquire_resource` takes the first free slot `0..N` via an atomic
+  `mkdir` (race-safe), reusing the existing fencing / TTL-stale-reclaim / ownership
+  machine — so a **slot held by a crashed session is reclaimed and the pool self-heals**.
+  Capacity is persisted (`<coord>/resources/<name>/capacity`) on first acquire and
+  validated thereafter. `slots=1` = exclusive.
+- **CLI:** `concord claim <id> <name> --kind resource [--slots N] [why]`
+  (`RESOURCE-ACQUIRED`/`RESOURCE-RECLAIMED`/`RESOURCE-BUSY`/`RESOURCE-CAPACITY-MISMATCH`)
+  and `concord release <id> <name> --kind resource`. `status`/`dash` gain a **RESOURCE
+  LOCKS** section (held/capacity + holders).
+- **SessionEnd composition (F1/A2 + F2):** the clean-exit teardown now also releases the
+  session's resource slots — a crashed or finished session auto-frees its ports/build-env.
+- New CI smoke `tests/resource-locks.sh` (N-slot pool, BUSY, capacity-validate,
+  orthogonality, release, SessionEnd auto-free) + two integration tests.
+
+### Examples (`ais`)
+- Build-env singleton: `claim <id> build-env --kind resource`.
+- QEMU port pool: `claim <id> qemu-port --kind resource --slots 8` (slot i → port 5900+i).
+- Per-VM exclusive port: `claim <id> qemu-port:5901 --kind resource` (check before killing).
+
 ## [0.6.0] - 2026-06-29
 
 Wave 2 — F1: harness-native enforcement. Concord's leases stop being advisory at the
