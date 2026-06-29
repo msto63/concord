@@ -27,8 +27,8 @@ mod launcher;
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::{Message, MessageKind};
 use concord_core::store::{
-    ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
-    StatusReport, Store,
+    ClaimOutcome, HoldStatus, LeaseCheck, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy,
+    ReleaseOutcome, StatusReport, Store,
 };
 use concord_core::{Paths, Result};
 
@@ -71,6 +71,29 @@ fn run(args: &[String]) -> Result<ExitCode> {
         "heartbeat" => {
             let id = require(rest, 0, "session id")?;
             store.heartbeat(id)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        "session-end" => {
+            // F1/A2: clean-exit teardown — release all of id's leases, drop the merge-lock
+            // if held, and deregister. Idempotent; driven by the SessionEnd hook.
+            let id = require(rest, 0, "session id")?;
+            let r = store.session_end(id)?;
+            if r.released.is_empty() && !r.merge_unlocked && !r.deregistered {
+                println!("session-end {id}: nothing to release (already clean)");
+            } else {
+                let mut parts = Vec::new();
+                if !r.released.is_empty() {
+                    parts.push(format!("released {}: {}", r.released.len(), r.released.join(", ")));
+                }
+                if r.merge_unlocked {
+                    parts.push("merge-unlock".to_string());
+                }
+                if r.deregistered {
+                    parts.push("deregistered".to_string());
+                }
+                println!("session-end {id}: {}", parts.join("; "));
+            }
             Ok(ExitCode::SUCCESS)
         }
 
@@ -393,6 +416,29 @@ fn run(args: &[String]) -> Result<ExitCode> {
                 }
                 MergeUnlockOutcome::NotYours { holder } => {
                     println!("REFUSED: merge lock held by '{holder}', not '{id}' — not unlocking");
+                    Ok(ExitCode::from(2))
+                }
+            }
+        }
+
+        "check-lease" => {
+            // F1/A1+A6: may <id> edit <area>? Exit 0 = ALLOW, exit 2 = DENY (with a
+            // one-line reason on stdout the hook reuses as permissionDecisionReason).
+            // P2 default (block-on-conflict); --strict = P1 (capability-strict).
+            let id = require(rest, 0, "session id")?;
+            let area = require(rest, 1, "area")?;
+            let strict = has_flag(rest, "--strict");
+            match store.check_lease(id, area, strict)? {
+                LeaseCheck::Allow => {
+                    println!("ALLOW {area}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                LeaseCheck::Deny { area: a, holder } => {
+                    if holder.is_empty() {
+                        println!("DENY {a} (no lease held by {id}; --strict)");
+                    } else {
+                        println!("DENY {a} (held by {holder})");
+                    }
                     Ok(ExitCode::from(2))
                 }
             }

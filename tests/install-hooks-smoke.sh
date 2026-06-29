@@ -27,14 +27,14 @@ run init >/dev/null
 
 # Default install-hooks wires settings (Unix). Should succeed and report the laydown.
 o=$(run install-hooks) && rc=0 || rc=$?
-chk "install-hooks writes 9 files" "$o" "9 hook files"
+chk "install-hooks writes 12 files" "$o" "12 hook files"
 chk "install-hooks exit 0" "$rc" 0
 
 # Files present in <coord>/hooks/.
-for f in lib.sh session-start.sh user-prompt.sh post-tool.sh pre-tool.sh statusline.sh install.sh uninstall.sh shared-regions; do
+for f in lib.sh session-start.sh session-end.sh user-prompt.sh post-tool.sh pre-tool.sh stop.sh pre-compact.sh statusline.sh install.sh uninstall.sh shared-regions; do
   [ -f "$COORD/hooks/$f" ] || { echo "✗ missing $f"; fail=1; }
 done
-[ "$fail" = 0 ] && echo "✓ all 9 hook files materialized"
+[ "$fail" = 0 ] && echo "✓ all 12 hook files materialized"
 
 # Byte-identical to the repo source.
 diff -q "$HERE/hooks/lib.sh" "$COORD/hooks/lib.sh" >/dev/null && echo "✓ lib.sh byte-identical" || { echo "✗ lib.sh differs"; fail=1; }
@@ -53,7 +53,7 @@ d = json.load(open(sys.argv[1]))
 assert d.get("existingKey") == "keepme", "existing key dropped"
 assert d.get("statusLine"), "no statusLine"
 hooks = d.get("hooks", {})
-for k in ("SessionStart","UserPromptSubmit","PostToolUse","PreToolUse"):
+for k in ("SessionStart","SessionEnd","UserPromptSubmit","PostToolUse","PreToolUse","Stop","PreCompact"):
     assert k in hooks, f"missing hook {k}"
 PY
 else

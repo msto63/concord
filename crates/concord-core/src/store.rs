@@ -110,6 +110,29 @@ pub struct StatusReport {
     pub sessions_dir_empty: bool,
 }
 
+/// The decision from [`Store::check_lease`] — the `PreToolUse` deny verdict (F1/A1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseCheck {
+    /// The edit is permitted.
+    Allow,
+    /// The edit is refused: `holder` actively holds a lease on the overlapping `area`
+    /// (P2), or — under strict P1 with no conflicting holder — `holder` is empty meaning
+    /// "you hold no covering lease".
+    Deny { area: String, holder: String },
+}
+
+/// What a clean session-end teardown did (F1/A2). All steps are idempotent, so a
+/// repeated call returns empty/false fields rather than erroring.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionEndReport {
+    /// Areas whose leases were released (held by the ending session).
+    pub released: Vec<String>,
+    /// Whether the ending session held — and thus released — the merge-lock.
+    pub merge_unlocked: bool,
+    /// Whether a registry entry existed and was removed.
+    pub deregistered: bool,
+}
+
 /// The coordination store, bound to a resolved [`Paths`] and a fixed `now`.
 ///
 /// `now` is captured once at construction so every field written in one logical
@@ -262,6 +285,83 @@ impl Store {
         Ok(ReleaseOutcome::Released)
     }
 
+    /// Decide whether `id` may edit `area`, for the `PreToolUse` deny hook (F1/A1) and
+    /// the `PostToolUse` audit (F1/A6). Two policies:
+    ///
+    /// - **P2 (default, `strict=false`) — block-on-conflict:** deny only if a *different,
+    ///   currently-active* session holds a lease overlapping `area`. Un-leased edits are
+    ///   allowed (no claim-everything friction); only a real collision is blocked. This is
+    ///   the enforced version of today's `pre-tool.sh` default-allow guard.
+    /// - **P1 (`strict=true`) — capability-strict:** deny unless `id` itself holds a lease
+    ///   covering `area`. Opt-in for high-assurance work.
+    ///
+    /// Symbol-aware throughout (a path-lease subsumes its symbols; disjoint symbols are
+    /// compatible), via [`slug::area_overlaps`]. Fail-open is the caller's job: the hook
+    /// treats any error/missing binary as Allow.
+    pub fn check_lease(&self, id: &str, area: &str, strict: bool) -> Result<LeaseCheck> {
+        // A live, non-self lease overlapping `area` is the conflict in both policies.
+        // NOTE: unlike `find_live_overlap` (claim-path, which excludes the exact-same area
+        // because the mkdir collision handles it), the edit-guard MUST catch the exact-same
+        // file/symbol too — that is the most common A1 collision.
+        let conflict = self.find_blocking_lease(id, area)?;
+        if strict {
+            // P1: allow only if `id` holds an overlapping (covering) lease of its own.
+            if self.holds_overlapping(id, area)? {
+                Ok(LeaseCheck::Allow)
+            } else {
+                let (holder, blocking_area) = match conflict {
+                    Some((a, h)) => (h, a),
+                    None => (String::new(), area.to_string()),
+                };
+                Ok(LeaseCheck::Deny { area: blocking_area, holder })
+            }
+        } else {
+            // P2: allow unless someone else actively holds an overlapping lease.
+            match conflict {
+                Some((a, holder)) => Ok(LeaseCheck::Deny { area: a, holder }),
+                None => Ok(LeaseCheck::Allow),
+            }
+        }
+    }
+
+    /// First live, non-self lease whose area overlaps `area` — INCLUDING an exact match
+    /// (the edit-guard conflict scan for [`Store::check_lease`]). Returns `(area, holder)`.
+    fn find_blocking_lease(&self, id: &str, area: &str) -> Result<Option<(String, String)>> {
+        for held_slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&held_slug);
+            if !dir.is_dir() {
+                continue;
+            }
+            let holder = read_trimmed(&dir.join("holder")).unwrap_or_else(|| "?".into());
+            if holder == id || self.holder_stale(&holder)? {
+                continue;
+            }
+            let held_area = read_trimmed(&dir.join("area")).unwrap_or_else(|| held_slug.clone());
+            if slug::area_overlaps(area, &held_area) {
+                return Ok(Some((held_area, holder)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Does `id` hold a live lease whose area overlaps `area`? (P1 allow-condition.)
+    fn holds_overlapping(&self, id: &str, area: &str) -> Result<bool> {
+        for held_slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&held_slug);
+            if !dir.is_dir() {
+                continue;
+            }
+            if read_trimmed(&dir.join("holder")).as_deref() != Some(id) {
+                continue;
+            }
+            let held_area = read_trimmed(&dir.join("area")).unwrap_or_else(|| held_slug.clone());
+            if slug::area_overlaps(area, &held_area) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Fence-aware ownership check: does `id` still legitimately hold `area`? The
     /// self-check a session runs after waking, before acting on its authority (Floor).
     pub fn verify_hold(&self, id: &str, area: &str) -> Result<HoldStatus> {
@@ -330,6 +430,58 @@ impl Store {
         fs::remove_dir_all(dir).map_err(|e| ConcordError::io(dir, e))?;
         self.append_log(id, "merge-unlock")?;
         Ok(MergeUnlockOutcome::Released)
+    }
+
+    // ─────────────────────────── session-end teardown (F1/A2) ───────────────────────────
+
+    /// Release every lease currently held by `id`, returning the released areas (sorted).
+    /// Used by the clean-exit teardown; ownership is enforced per-lease by [`Store::release`],
+    /// so only the caller's own leases are removed. Idempotent.
+    pub fn release_all(&self, id: &str) -> Result<Vec<String>> {
+        let mut released = Vec::new();
+        for area_slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&area_slug);
+            if !dir.is_dir() {
+                continue;
+            }
+            if read_trimmed(&dir.join("holder")).as_deref() != Some(id) {
+                continue;
+            }
+            let area = read_trimmed(&dir.join("area")).unwrap_or_else(|| area_slug.clone());
+            if let ReleaseOutcome::Released = self.release(id, &area, None)? {
+                released.push(area);
+            }
+        }
+        Ok(released)
+    }
+
+    /// Remove `id`'s registry entry (idempotent). Returns whether an entry existed.
+    /// Unlike letting the heartbeat go stale, this deregisters immediately on clean exit.
+    pub fn deregister(&self, id: &str) -> Result<bool> {
+        let f = self.paths.session_file(id);
+        match fs::remove_file(&f) {
+            Ok(()) => {
+                self.append_log(id, "deregister")?;
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(ConcordError::io(&f, e)),
+        }
+    }
+
+    /// Clean-exit teardown (F1/A2): release all of `id`'s leases, release the merge-lock
+    /// if `id` holds it, and deregister. Each step is idempotent, so re-running on an
+    /// already-ended session is a harmless no-op. Shrinks the window in which a finished
+    /// session still appears to hold authority (complements TTL-stale-reclaim).
+    pub fn session_end(&self, id: &str) -> Result<SessionEndReport> {
+        let released = self.release_all(id)?;
+        let merge_unlocked = matches!(self.merge_unlock(id)?, MergeUnlockOutcome::Released);
+        let deregistered = self.deregister(id)?;
+        Ok(SessionEndReport {
+            released,
+            merge_unlocked,
+            deregistered,
+        })
     }
 
     // ──────────────────────────────── log / sync ────────────────────────────────
