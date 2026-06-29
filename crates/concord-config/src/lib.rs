@@ -31,9 +31,21 @@ struct RawConfig {
     escalation: RawEscalation,
     #[serde(default)]
     resources: RawResources,
+    #[serde(default)]
+    telemetry: RawTelemetry,
     /// User-global only: project-root → coord-dir bootstrap map.
     #[serde(default)]
     projects: HashMap<String, String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawTelemetry {
+    enabled: Option<bool>,
+    port: Option<u16>,
+    idle_min: Option<u64>,
+    burn_warn: Option<u64>,
+    reject_storm: Option<u32>,
+    loop_window: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -113,6 +125,24 @@ impl RawConfig {
         }
         if let Some(v) = self.resources.default_slots {
             c.resources.default_slots = v;
+        }
+        if let Some(v) = self.telemetry.enabled {
+            c.telemetry.enabled = v;
+        }
+        if let Some(v) = self.telemetry.port {
+            c.telemetry.port = v;
+        }
+        if let Some(v) = self.telemetry.idle_min {
+            c.telemetry.idle_min = v;
+        }
+        if let Some(v) = self.telemetry.burn_warn {
+            c.telemetry.burn_warn = v;
+        }
+        if let Some(v) = self.telemetry.reject_storm {
+            c.telemetry.reject_storm = v;
+        }
+        if let Some(v) = self.telemetry.loop_window {
+            c.telemetry.loop_window = v;
         }
     }
 }

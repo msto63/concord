@@ -17,11 +17,13 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::clock;
+use crate::config::TelemetryConfig;
 use crate::error::{ConcordError, Result};
 use crate::escalation::{
     AckTickReport, EscStatus, Escalation, Pending, Redeliver, ResolveOutcome, Severity,
 };
 use crate::message::Message;
+use crate::telemetry::{health, HealthFlag, SessionHealth, TelemetryPoint};
 use crate::model::{LedgerEntry, Lease, MergeLock, Session};
 use crate::paths::Paths;
 use crate::slug;
@@ -845,6 +847,90 @@ impl Store {
             }
         }
         Ok(report)
+    }
+
+    // ──────────────────────────── telemetry / health (F4) ────────────────────────────
+
+    /// Append a normalized telemetry datapoint for `id` (the daemon's OTLP receiver calls
+    /// this after parsing a Claude Code metric). Privacy: only metric attributes, never
+    /// prompt content.
+    pub fn record_telemetry(&self, id: &str, point: &TelemetryPoint) -> Result<()> {
+        let f = self.paths.telemetry_file(id);
+        if let Some(dir) = f.parent() {
+            mkdirs(dir)?;
+        }
+        append_file(&f, &format!("{}\n", point.to_line()))
+    }
+
+    fn read_telemetry(&self, id: &str) -> Result<Vec<TelemetryPoint>> {
+        let f = self.paths.telemetry_file(id);
+        match fs::read_to_string(&f) {
+            Ok(body) => Ok(body.lines().filter_map(TelemetryPoint::parse_line).collect()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(ConcordError::io(&f, e)),
+        }
+    }
+
+    /// The health verdict for one session (F4), or `None` if it has no telemetry yet.
+    pub fn session_health(&self, id: &str, cfg: &TelemetryConfig) -> Result<Option<SessionHealth>> {
+        let points = self.read_telemetry(id)?;
+        if points.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(health(id, &points, cfg, self.now)))
+    }
+
+    /// Health for every session with telemetry — the `hub` TELEMETRY/HEALTH surface.
+    pub fn all_health(&self, cfg: &TelemetryConfig) -> Result<Vec<SessionHealth>> {
+        let mut out = Vec::new();
+        for name in sorted_entries(&self.paths.telemetry)? {
+            let id = name.strip_suffix(".jsonl").unwrap_or(&name).to_string();
+            if let Some(h) = self.session_health(&id, cfg)? {
+                out.push(h);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Does `id` hold any live lease? (B3 watchdog predicate.)
+    fn holds_any_lease(&self, id: &str) -> Result<bool> {
+        for slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&slug);
+            if dir.is_dir() && read_trimmed(&dir.join("holder")).as_deref() == Some(id) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// B3 watchdog (F4 → F3): a session that has gone telemetry-**idle** while it still
+    /// holds a lease or has un-ACK'd directives is auto-escalated to the coordinator
+    /// (severity High), reusing the F3 escalation machine. Dedup: a `<id>.watchdog` marker
+    /// prevents re-escalation until the session recovers (telemetry resumes), when the
+    /// marker is cleared. Returns the escalation seqs raised this tick.
+    pub fn telemetry_watchdog(&self, cfg: &TelemetryConfig, coordinator: &str) -> Result<Vec<u64>> {
+        let mut raised = Vec::new();
+        for h in self.all_health(cfg)? {
+            let marker = self.paths.telemetry.join(format!("{}.watchdog", slug::slug(&h.id)));
+            let dark = h.flag == HealthFlag::Idle
+                && (self.holds_any_lease(&h.id)? || !self.read_pending(&h.id)?.is_empty());
+            if dark {
+                if !marker.exists() {
+                    let mins = h.idle_secs / 60;
+                    let about = format!(
+                        "{} is telemetry-idle for {mins} min while holding work (lease/pending) — possible going-dark/stuck",
+                        h.id
+                    );
+                    let seq = self.escalate("concordd", coordinator, Severity::High, &about, Some(&h.id))?;
+                    let _ = self.write_atomic(&marker, "1\n");
+                    raised.push(seq);
+                }
+            } else {
+                // Recovered → allow a future re-escalation.
+                let _ = fs::remove_file(&marker);
+            }
+        }
+        Ok(raised)
     }
 
     fn read_pending(&self, id: &str) -> Result<Vec<Pending>> {

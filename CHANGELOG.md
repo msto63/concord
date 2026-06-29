@@ -11,6 +11,37 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-29
+
+Wave 2 — F4: hub telemetry. The coordinator becomes **telemetry-driven** instead of
+prose-reading — it consumes Claude Code's native OpenTelemetry stream to *measure* fleet
+health (burn / idle / reject / loop), and a dark-session watchdog auto-escalates via F3.
+(ADR-0003 F4 + folded B3.) Built natively on the OTel stream — **no SaaS dependency**
+(Policy 3).
+
+### Added
+- **OTLP/HTTP-JSON telemetry receiver** (`concordd`, Unix-only): a minimal
+  `std::net::TcpListener` + `serde_json` sink on a Concord-specific port (default **4319**,
+  config `[telemetry] port`) — no protobuf / no otel-collector dependency. Claude Code,
+  launched with `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` + `OTEL_RESOURCE_ATTRIBUTES=
+  concord.id=<id>` (the launcher sets these — Claude's *own* OTEL_* vars, not Concord env),
+  POSTs metrics that are normalized to `<coord>/telemetry/<id>.jsonl`. **Privacy:** only
+  metric attributes are ingested — never prompt content.
+- **Health heuristic** (`concord-core::telemetry`, testable + dependency-free): per session
+  **OK / IDLE / BURN / REJECT / LOOP** from token-burn rate, idle gap, edit-tool reject
+  storms, and sustained-activity-without-progress, against `[telemetry]` thresholds.
+  Surfaced in `status`/`dash` (TELEMETRY / HEALTH).
+- **B3 dark-session watchdog → F3:** a telemetry-idle session still holding a lease or with
+  un-ACK'd directives is auto-escalated (severity `high`) to the coordinator, deduped by a
+  per-session marker until it recovers.
+- New `[telemetry]` config section + sample; integration test (health + watchdog→F3),
+  OTLP-parser + health unit tests, launcher OTel-env smoke.
+
+### Notes
+- **Windows:** the telemetry receiver is Unix-only (like the daemon's Strong tier),
+  consistent with the Floor support matrix. **ccusage** is an optional local cost view
+  (no build dependency).
+
 ## [0.9.0] - 2026-06-29
 
 F-config (operator-inserted between F3 and F4): ONE `config.toml`, environment variables

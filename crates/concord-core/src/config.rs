@@ -58,6 +58,24 @@ pub struct ResourcesConfig {
     pub default_slots: u32,
 }
 
+/// `[telemetry]` — the F4 hub-telemetry layer (consumes Claude Code's native OTel stream).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelemetryConfig {
+    /// Whether the launcher enables telemetry + the daemon runs the OTLP receiver.
+    pub enabled: bool,
+    /// The local OTLP/HTTP-JSON receiver port (a Concord-specific default so it never
+    /// collides with a user's real collector on 4317/4318).
+    pub port: u16,
+    /// Minutes with no telemetry datapoint before a session counts as idle.
+    pub idle_min: u64,
+    /// Token-usage rate (tokens per minute) above which a session is flagged BURN.
+    pub burn_warn: u64,
+    /// Edit-tool reject/deny decisions within `loop_window` that flag a REJECT storm.
+    pub reject_storm: u32,
+    /// The look-back window (seconds) for burn / reject / loop heuristics.
+    pub loop_window: u64,
+}
+
 /// The full resolved configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
@@ -66,6 +84,20 @@ pub struct Config {
     pub launcher: LauncherConfig,
     pub escalation: EscalationConfig,
     pub resources: ResourcesConfig,
+    pub telemetry: TelemetryConfig,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        TelemetryConfig {
+            enabled: false,
+            port: 4319,
+            idle_min: 15,
+            burn_warn: 20_000,
+            reject_storm: 5,
+            loop_window: 600,
+        }
+    }
 }
 
 impl Default for LeasesConfig {

@@ -25,6 +25,15 @@ chk "start a --print: binds id via idbind" "$o" "idbind"
 chk "start a --print: worker kickoff text" "$o" "You are Concord worker session a"
 chk "start a --print: no real spawn"       "$o" "would start session a"
 
+# F4: with telemetry enabled in config, start --print injects the Claude Code OTel env.
+mkdir -p "$PROJ-coord"
+printf '[telemetry]\nenabled = true\nport = 4319\n' > "$PROJ-coord/config.toml"
+o=$( cd "$PROJ" && cx start a --print 2>&1 )
+chk "start --print: telemetry env when enabled" "$o" "CLAUDE_CODE_ENABLE_TELEMETRY=1"
+chk "start --print: OTLP endpoint to local receiver" "$o" "http://127.0.0.1:4319"
+chk "start --print: concord.id resource attr" "$o" "concord.id=a"
+rm -f "$PROJ-coord/config.toml"
+
 # start hub --print: coordinator role + coordinator kickoff.
 o=$( cd "$PROJ" && cx start hub --print 2>&1 )
 chk "start hub --print: coordinator role"  "$o" "coordinator · takes up coordination"

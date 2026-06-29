@@ -64,6 +64,14 @@ const SAMPLE_CONFIG: &str = r#"# Concord configuration (F-config). Project confi
 # port_base = 5900           # qemu-port pool: slot i -> port_base + i
 # default_slots = 1
 
+[telemetry]
+# enabled = false            # launcher enables Claude Code OTel + daemon runs the receiver
+# port = 4319                # local OTLP/HTTP-JSON receiver (own port, not 4317/4318)
+# idle_min = 15              # minutes with no telemetry before a session is IDLE (dark)
+# burn_warn = 20000          # tokens/min above which a session is flagged BURN
+# reject_storm = 5           # edit-tool reject/deny decisions in loop_window -> REJECT
+# loop_window = 600          # look-back window (s) for burn/reject/loop heuristics
+
 # User-global only (~/.config/concord/config.toml): bootstrap map of project -> coord dir.
 # [projects]
 # "/path/to/your-repo" = "/path/to/your-repo-coord"
@@ -802,6 +810,27 @@ fn print_status(store: &Store) -> Result<()> {
         for (id, count, oldest) in &pending {
             let age = now.saturating_sub(*oldest) / 60;
             println!("  {id:<28} {count} un-ACK'd (oldest {age}m)");
+        }
+    }
+    // F4: telemetry-driven health (only when any session has telemetry).
+    let tcfg = concord_config::load(&store.paths().coord).telemetry;
+    let health = store.all_health(&tcfg)?;
+    if !health.is_empty() {
+        println!("TELEMETRY / HEALTH:");
+        for h in &health {
+            let idle = if h.idle_secs == u64::MAX {
+                "—".to_string()
+            } else {
+                format!("{}m", h.idle_secs / 60)
+            };
+            println!(
+                "  {:<20} {:<7} burn {}/min · idle {} · rejects {}",
+                h.id,
+                h.flag.as_str(),
+                h.burn_per_min,
+                idle,
+                h.reject_count
+            );
         }
     }
     Ok(())

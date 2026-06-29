@@ -5,12 +5,61 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use concord_core::config::TelemetryConfig;
 use concord_core::escalation::{EscStatus, ResolveOutcome, Severity};
 use concord_core::store::{
     ClaimOutcome, HoldStatus, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome, ResourceOutcome,
     ResourceReleaseOutcome,
 };
+use concord_core::telemetry::{HealthFlag, TelemetryPoint};
 use concord_core::{Paths, Store};
+
+/// F4: recorded telemetry drives the health verdict; the B3 watchdog auto-escalates a
+/// telemetry-idle session that still holds a lease (reusing F3), and clears on recovery.
+#[test]
+fn telemetry_health_and_watchdog() {
+    let (root, paths) = temp_paths();
+    let cfg = TelemetryConfig { enabled: true, idle_min: 15, ..TelemetryConfig::default() };
+
+    // No telemetry yet → no health, watchdog raises nothing.
+    let s0 = store_at(&paths, 100_000);
+    assert!(s0.session_health("w", &cfg).unwrap().is_none());
+    assert!(s0.telemetry_watchdog(&cfg, "hub").unwrap().is_empty());
+
+    // Record an old token datapoint, and `w` holds a lease → it is dark (idle+work).
+    let t_old = 100_000u64;
+    store_at(&paths, t_old).register("w", "").unwrap();
+    store_at(&paths, t_old).claim("w", "src/x.rs", "", OverlapPolicy::RejectOverlap).unwrap();
+    store_at(&paths, t_old)
+        .record_telemetry("w", &TelemetryPoint { ts: t_old, metric: "token".into(), value: 50.0, attr: "output".into() })
+        .unwrap();
+
+    // 20 min later (> idle_min): health = Idle, watchdog escalates once.
+    let now = t_old + 20 * 60;
+    let h = store_at(&paths, now).session_health("w", &cfg).unwrap().unwrap();
+    assert_eq!(h.flag, HealthFlag::Idle);
+    let raised = store_at(&paths, now).telemetry_watchdog(&cfg, "hub").unwrap();
+    assert_eq!(raised.len(), 1, "dark session escalated");
+
+    // The escalation is High, from concordd, references the session.
+    let escs = store_at(&paths, now).escalations().unwrap();
+    assert_eq!(escs[0].severity, Severity::High);
+    assert_eq!(escs[0].reference.as_deref(), Some("w"));
+
+    // Dedup: a second tick does NOT re-escalate (marker present).
+    assert!(store_at(&paths, now + 60).telemetry_watchdog(&cfg, "hub").unwrap().is_empty());
+
+    // Recovery: fresh telemetry → not idle → marker cleared, and a later relapse re-escalates.
+    let t2 = now + 120;
+    store_at(&paths, t2)
+        .record_telemetry("w", &TelemetryPoint { ts: t2, metric: "token".into(), value: 10.0, attr: "output".into() })
+        .unwrap();
+    assert!(store_at(&paths, t2).telemetry_watchdog(&cfg, "hub").unwrap().is_empty()); // healthy → clears marker
+    let later = t2 + 20 * 60;
+    assert_eq!(store_at(&paths, later).telemetry_watchdog(&cfg, "hub").unwrap().len(), 1, "re-escalates after recovery");
+
+    let _ = std::fs::remove_dir_all(root);
+}
 
 /// F3/E2: a tracked escalation persists until resolved; `escalations` lists open first.
 #[test]
@@ -187,6 +236,7 @@ fn temp_paths() -> (PathBuf, Paths) {
         resources: coord.join("resources"),
         acks: coord.join("acks"),
         escalations: coord.join("escalations"),
+        telemetry: coord.join("telemetry"),
         log: coord.join("intents.jsonl"),
         merge_lock: coord.join("merge.lock"),
         coord: coord.clone(),
