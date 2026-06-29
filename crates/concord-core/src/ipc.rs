@@ -13,9 +13,31 @@
 //! and is taken verbatim to end-of-line.
 
 use std::fmt;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 
 /// Socket file name under the coordination dir.
 pub const SOCKET_NAME: &str = "concordd.sock";
+
+/// Client side of the mediation protocol: connect to the daemon's socket at
+/// `sock_path`, send `req`, and return the parsed response. Returns `None` if the
+/// socket is absent/unreachable or the daemon answered with an error — in all of
+/// which the caller falls back to the Floor (direct FS). Shared by the CLI and the
+/// MCP server so both get the same airtight Strong-tier path when the daemon is up.
+pub fn mediate(sock_path: &Path, req: &Request) -> Option<Response> {
+    if !sock_path.exists() {
+        return None;
+    }
+    let mut stream = UnixStream::connect(sock_path).ok()?;
+    writeln!(stream, "{}", req.to_line()).ok()?;
+    let mut line = String::new();
+    BufReader::new(&stream).read_line(&mut line).ok()?;
+    match Response::parse_line(&line) {
+        Some(Response::Err(_)) | None => None, // daemon hiccup ⇒ fall back to Floor
+        other => other,
+    }
+}
 
 /// A request from the CLI to the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]

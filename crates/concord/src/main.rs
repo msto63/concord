@@ -19,8 +19,6 @@
 //! Exit codes match the shell: claim CONFLICT and merge-lock-held ⇒ 2; unknown
 //! command ⇒ 1; missing required arg ⇒ 1.
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
@@ -396,17 +394,7 @@ fn mediate(store: &Store, req: Request) -> Option<Response> {
         return None;
     }
     let sock = store.paths().coord.join(SOCKET_NAME);
-    if !sock.exists() {
-        return None;
-    }
-    let mut stream = UnixStream::connect(&sock).ok()?;
-    writeln!(stream, "{}", req.to_line()).ok()?;
-    let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).ok()?;
-    match Response::parse_line(&line) {
-        Some(Response::Err(_)) | None => None, // daemon hiccup → fall back to Floor
-        other => other,
-    }
+    concord_core::ipc::mediate(&sock, &req)
 }
 
 /// The value following `flag` (e.g. `--fence 7` ⇒ `Some("7")`), or `None`.
