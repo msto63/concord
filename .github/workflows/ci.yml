@@ -27,10 +27,7 @@ jobs:
       - name: Version discipline
         run: bash scripts/check-version.sh
       - name: Shell smoke tests
-        run: |
-          for t in symbol-locks daemon-e2e launcher-smoke mcp-smoke coord-sh-resolution install-hooks-smoke hooks-enforce-smoke resource-locks ack-escalation config contracts; do
-            echo "── $t ──"; bash "tests/$t.sh"
-          done
+        run: bash tests/all.sh   # auto-discovers + runs every tests/*.sh (15+)
 
   windows-check:
     name: windows portability (cfg-gate)

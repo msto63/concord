@@ -11,6 +11,23 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-06-30
+
+### Added
+- **Telemetry end-to-end smoke** (`tests/telemetry-smoke.sh`): starts `concordd` with the OTLP
+  receiver on a probed free port (isolated; never clashes with a live daemon), POSTs synthetic
+  OTLP/HTTP-JSON metrics, and asserts `concord status` flags BURN / REJECT / IDLE. Closes the
+  one feature without a smoke (the HTTP receiver path).
+- **Fencing smoke** (`tests/fencing-smoke.sh`): the fencing token at the CLI — a stale fence is
+  refused, and after a stale-reclaim the old holder cannot release the reclaimed lease (no
+  split-brain). The core fence Floor stays covered by the integration tests (not duplicated).
+- **`make test` / `tests/all.sh`**: a one-command runner — `cargo test --workspace` + every
+  shell smoke (auto-discovered, so the list never drifts). CI now runs the full suite (15+
+  smokes, incl. the previously CI-absent `multiproject` and `dogfood-smoke`).
+- **MANUAL §16 "Testing"**: how to run the suite + a live-validation checklist for the
+  experienceable enforcement (claim conflict, symbol locks, contract break, merge-lock
+  singleton, the keystroke deny, the telemetry watchdog).
+
 ## [0.11.3] - 2026-06-30
 
 ### Changed

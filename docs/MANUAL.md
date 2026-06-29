@@ -338,3 +338,32 @@ the repo); no per-project environment is needed.
   cost, and the motivation for per-recipient inboxes (a planned enhancement).
 - **A bare background `while true` does not wake an AI session.** Use the harness monitor + a timer.
 - **Worktrees must follow the `<repo>-<id>` convention** so the CLI can derive paths without a map.
+
+## 16. Testing
+
+### Run the suite
+
+```bash
+make test          # cargo unit/integration tests + every shell smoke test
+make smokes        # just the shell smokes (tests/all.sh)
+```
+
+`tests/all.sh` auto-discovers `tests/*.sh`, so a new smoke is picked up automatically; CI
+runs the same suite. Each smoke isolates its own coordination state (a scratch dir + a
+cleared `CONCORD_*` env) and never touches a live one — a test that needs a daemon picks a
+free port, and a test that must see "no binary" runs with a minimal `PATH`.
+
+### Live validation checklist
+
+To *see* the enforced behavior yourself, set up a throwaway repo with two sessions
+(`a` and `b`) and walk through these. Each should behave as noted:
+
+| Try this | Expected |
+|---|---|
+| `b` edits a file `a` has `claim`ed (with the hooks installed) | the edit is **blocked** at the keystroke (`PreToolUse` deny) |
+| `a` claims `src/lib.rs:foo`, `b` claims `src/lib.rs:bar` | **both succeed** — disjoint symbols in the same file |
+| `b` claims `src/lib.rs:foo` while `a` holds it | **CONFLICT** — same symbol |
+| `a` registers a `contract` on a function, then someone changes its **signature** | `contract-check` / the commit + merge gate **fails** (`exit 2`) — changing the body does not |
+| two sessions both take `merge-lock` | only the **first** holds it; the second is told who holds it |
+| `a` holds a lease, goes stale, `b` reclaims, then `a` releases with its old fence | `a` is **refused** — no split-brain (see `tests/fencing-smoke.sh`) |
+| feed telemetry for an idle / high-burn / reject-storm session | `concord status` flags it **IDLE / BURN / REJECT**, and the watchdog escalates a dark session (see `tests/telemetry-smoke.sh`) |
