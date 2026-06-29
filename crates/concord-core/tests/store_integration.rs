@@ -10,6 +10,39 @@ use concord_core::store::{
 };
 use concord_core::{Paths, Store};
 
+/// F1/A2: clean-exit teardown releases the ending session's leases + merge-lock and
+/// deregisters it, leaves other sessions untouched, and is idempotent.
+#[test]
+fn session_end_releases_all_and_is_idempotent() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 1000);
+    s.register("a", "work").unwrap();
+    s.register("b", "work").unwrap();
+    assert_eq!(s.claim("a", "src/x.rs", "", OverlapPolicy::RejectOverlap).unwrap(), ClaimOutcome::Claimed);
+    assert_eq!(s.claim("a", "src/y.rs", "", OverlapPolicy::RejectOverlap).unwrap(), ClaimOutcome::Claimed);
+    assert_eq!(s.claim("b", "docs/z.md", "", OverlapPolicy::RejectOverlap).unwrap(), ClaimOutcome::Claimed);
+    s.merge_lock("a", "merge").unwrap();
+
+    let r = s.session_end("a").unwrap();
+    assert_eq!(r.released.len(), 2, "both of a's leases released: {:?}", r.released);
+    assert!(r.merge_unlocked, "a held the merge-lock");
+    assert!(r.deregistered, "a's registry entry removed");
+
+    // b's lease + registration survive; the merge-lock is free.
+    let st = s.status().unwrap();
+    assert!(st.sessions.iter().any(|x| x.id == "b"), "b still registered");
+    assert!(!st.sessions.iter().any(|x| x.id == "a"), "a deregistered");
+    assert_eq!(st.leases.len(), 1, "only b's lease remains");
+    assert_eq!(st.leases[0].holder, "b");
+    assert_eq!(st.merge_lock_holder, None);
+
+    // Idempotent: a second teardown does nothing and does not error.
+    let r2 = s.session_end("a").unwrap();
+    assert!(r2.released.is_empty() && !r2.merge_unlocked && !r2.deregistered);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A throwaway coord dir under the system temp dir, unique per test without RNG.

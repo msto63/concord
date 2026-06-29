@@ -18,11 +18,12 @@ def ent(cmd, matcher=None):
     if matcher is not None: h["matcher"] = matcher
     return [h]
 hooks["SessionStart"]     = ent(f"{H}/session-start.sh")
+hooks["SessionEnd"]       = ent(f"{H}/session-end.sh")   # F1/A2: clean-exit auto-release
 hooks["UserPromptSubmit"] = ent(f"{H}/user-prompt.sh")
 hooks["PostToolUse"]      = ent(f"{H}/post-tool.sh")
 hooks["PreToolUse"]       = ent(f"{H}/pre-tool.sh", "Edit|Write|MultiEdit|NotebookEdit|Bash")
 with open(spath, "w") as f: json.dump(cfg, f, indent=2, ensure_ascii=False)
 print("merged statusLine + SessionStart/UserPromptSubmit/PostToolUse/PreToolUse hooks")
 PY
-python3 -c 'import json;d=json.load(open("'"$S"'"));assert d.get("statusLine");assert set(("SessionStart","UserPromptSubmit","PostToolUse","PreToolUse"))<=set(d.get("hooks",{}));print("verified: valid JSON, all hooks present, existing keys kept:", [k for k in d if k not in ("hooks","statusLine")])'
+python3 -c 'import json;d=json.load(open("'"$S"'"));assert d.get("statusLine");assert set(("SessionStart","SessionEnd","UserPromptSubmit","PostToolUse","PreToolUse"))<=set(d.get("hooks",{}));print("verified: valid JSON, all hooks present, existing keys kept:", [k for k in d if k not in ("hooks","statusLine")])'
 echo "DONE. New / restarted sessions pick up the hooks. To revert: bash $H/uninstall.sh"

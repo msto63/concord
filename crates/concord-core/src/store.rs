@@ -110,6 +110,18 @@ pub struct StatusReport {
     pub sessions_dir_empty: bool,
 }
 
+/// What a clean session-end teardown did (F1/A2). All steps are idempotent, so a
+/// repeated call returns empty/false fields rather than erroring.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionEndReport {
+    /// Areas whose leases were released (held by the ending session).
+    pub released: Vec<String>,
+    /// Whether the ending session held — and thus released — the merge-lock.
+    pub merge_unlocked: bool,
+    /// Whether a registry entry existed and was removed.
+    pub deregistered: bool,
+}
+
 /// The coordination store, bound to a resolved [`Paths`] and a fixed `now`.
 ///
 /// `now` is captured once at construction so every field written in one logical
@@ -330,6 +342,58 @@ impl Store {
         fs::remove_dir_all(dir).map_err(|e| ConcordError::io(dir, e))?;
         self.append_log(id, "merge-unlock")?;
         Ok(MergeUnlockOutcome::Released)
+    }
+
+    // ─────────────────────────── session-end teardown (F1/A2) ───────────────────────────
+
+    /// Release every lease currently held by `id`, returning the released areas (sorted).
+    /// Used by the clean-exit teardown; ownership is enforced per-lease by [`Store::release`],
+    /// so only the caller's own leases are removed. Idempotent.
+    pub fn release_all(&self, id: &str) -> Result<Vec<String>> {
+        let mut released = Vec::new();
+        for area_slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&area_slug);
+            if !dir.is_dir() {
+                continue;
+            }
+            if read_trimmed(&dir.join("holder")).as_deref() != Some(id) {
+                continue;
+            }
+            let area = read_trimmed(&dir.join("area")).unwrap_or_else(|| area_slug.clone());
+            if let ReleaseOutcome::Released = self.release(id, &area, None)? {
+                released.push(area);
+            }
+        }
+        Ok(released)
+    }
+
+    /// Remove `id`'s registry entry (idempotent). Returns whether an entry existed.
+    /// Unlike letting the heartbeat go stale, this deregisters immediately on clean exit.
+    pub fn deregister(&self, id: &str) -> Result<bool> {
+        let f = self.paths.session_file(id);
+        match fs::remove_file(&f) {
+            Ok(()) => {
+                self.append_log(id, "deregister")?;
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(ConcordError::io(&f, e)),
+        }
+    }
+
+    /// Clean-exit teardown (F1/A2): release all of `id`'s leases, release the merge-lock
+    /// if `id` holds it, and deregister. Each step is idempotent, so re-running on an
+    /// already-ended session is a harmless no-op. Shrinks the window in which a finished
+    /// session still appears to hold authority (complements TTL-stale-reclaim).
+    pub fn session_end(&self, id: &str) -> Result<SessionEndReport> {
+        let released = self.release_all(id)?;
+        let merge_unlocked = matches!(self.merge_unlock(id)?, MergeUnlockOutcome::Released);
+        let deregistered = self.deregister(id)?;
+        Ok(SessionEndReport {
+            released,
+            merge_unlocked,
+            deregistered,
+        })
     }
 
     // ──────────────────────────────── log / sync ────────────────────────────────

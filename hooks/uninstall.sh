@@ -13,7 +13,7 @@ import sys, json
 spath = sys.argv[1]
 with open(spath) as f: cfg = json.load(f)
 cfg.pop("statusLine", None)
-for k in ("SessionStart","UserPromptSubmit","PostToolUse","PreToolUse"):
+for k in ("SessionStart","SessionEnd","UserPromptSubmit","PostToolUse","PreToolUse"):
     cfg.get("hooks", {}).pop(k, None)
 if cfg.get("hooks") == {}: cfg.pop("hooks", None)
 with open(spath, "w") as f: json.dump(cfg, f, indent=2, ensure_ascii=False)

@@ -32,6 +32,7 @@ struct HookFile {
 const HOOK_FILES: &[HookFile] = &[
     HookFile { name: "lib.sh", body: include_str!("../../../hooks/lib.sh"), exec: true },
     HookFile { name: "session-start.sh", body: include_str!("../../../hooks/session-start.sh"), exec: true },
+    HookFile { name: "session-end.sh", body: include_str!("../../../hooks/session-end.sh"), exec: true },
     HookFile { name: "user-prompt.sh", body: include_str!("../../../hooks/user-prompt.sh"), exec: true },
     HookFile { name: "post-tool.sh", body: include_str!("../../../hooks/post-tool.sh"), exec: true },
     HookFile { name: "pre-tool.sh", body: include_str!("../../../hooks/pre-tool.sh"), exec: true },

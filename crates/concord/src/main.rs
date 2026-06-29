@@ -74,6 +74,29 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
+        "session-end" => {
+            // F1/A2: clean-exit teardown — release all of id's leases, drop the merge-lock
+            // if held, and deregister. Idempotent; driven by the SessionEnd hook.
+            let id = require(rest, 0, "session id")?;
+            let r = store.session_end(id)?;
+            if r.released.is_empty() && !r.merge_unlocked && !r.deregistered {
+                println!("session-end {id}: nothing to release (already clean)");
+            } else {
+                let mut parts = Vec::new();
+                if !r.released.is_empty() {
+                    parts.push(format!("released {}: {}", r.released.len(), r.released.join(", ")));
+                }
+                if r.merge_unlocked {
+                    parts.push("merge-unlock".to_string());
+                }
+                if r.deregistered {
+                    parts.push("deregistered".to_string());
+                }
+                println!("session-end {id}: {}", parts.join("; "));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
         "status" => {
             print_status(&store)?;
             Ok(ExitCode::SUCCESS)
