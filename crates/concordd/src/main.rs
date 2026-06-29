@@ -30,7 +30,9 @@ use concord_core::clock;
 use concord_core::directive::{demux, route};
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::Message;
-use concord_core::store::{MergeLockOutcome, MergeUnlockOutcome};
+use concord_core::store::{
+    ClaimOutcome, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
+};
 use concord_core::{Paths, Store};
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
@@ -144,6 +146,38 @@ fn apply(paths: &Paths, req: Request) -> Response {
                 Ok(MergeUnlockOutcome::Released) => Response::Released,
                 Ok(MergeUnlockOutcome::NotHeld) => Response::NotHeld,
                 Ok(MergeUnlockOutcome::NotYours { holder }) => Response::NotYours { holder },
+                Err(e) => Response::Err(e.to_string()),
+            }
+        }
+        // M3L.2: claim/release mediated too — the check-and-apply runs in this single
+        // handler thread, so the Floor's check-then-commit TOCTOU window is closed for
+        // these ops when the daemon is up. The enforced overlap policy always applies.
+        Request::Claim { id, area, why } => {
+            let store = match Store::open(paths.clone()) {
+                Ok(s) => s,
+                Err(e) => return Response::Err(e.to_string()),
+            };
+            match store.claim(&id, &area, &why, OverlapPolicy::RejectOverlap) {
+                Ok(ClaimOutcome::Claimed) => Response::Claimed,
+                Ok(ClaimOutcome::AlreadyYours) => Response::AlreadyYours,
+                Ok(ClaimOutcome::Reclaimed { previous }) => Response::Reclaimed { previous },
+                Ok(ClaimOutcome::Conflict { holder }) => Response::ClaimConflict { holder },
+                Ok(ClaimOutcome::OverlapConflict { area, holder }) => {
+                    Response::Overlap { area, holder }
+                }
+                Err(e) => Response::Err(e.to_string()),
+            }
+        }
+        Request::Release { id, area, fence } => {
+            let store = match Store::open(paths.clone()) {
+                Ok(s) => s,
+                Err(e) => return Response::Err(e.to_string()),
+            };
+            match store.release(&id, &area, fence) {
+                Ok(ReleaseOutcome::Released) => Response::Released,
+                Ok(ReleaseOutcome::NoLease) => Response::NoLease,
+                Ok(ReleaseOutcome::NotYours { holder }) => Response::NotYours { holder },
+                Ok(ReleaseOutcome::FenceStale { current }) => Response::FenceStale { current },
                 Err(e) => Response::Err(e.to_string()),
             }
         }

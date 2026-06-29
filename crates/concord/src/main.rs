@@ -80,6 +80,40 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
             let why = opt(rest, 2).unwrap_or("");
+            // M3L.2 Strong tier: route through the daemon (airtight check-and-apply)
+            // when it is up; the Floor (direct, RejectOverlap default) otherwise.
+            if let Some(resp) = mediate(
+                &store,
+                Request::Claim {
+                    id: id.to_string(),
+                    area: area.to_string(),
+                    why: why.to_string(),
+                },
+            ) {
+                match resp {
+                    Response::Claimed => {
+                        println!("CLAIMED {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::AlreadyYours => {
+                        println!("already yours: {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::Reclaimed { previous } => {
+                        println!("RECLAIMED {area} (stale holder {previous})");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::ClaimConflict { holder } => {
+                        println!("CONFLICT: '{area}' is leased by '{holder}' — coordinate first (status / SESSION-SYNC)");
+                        return Ok(ExitCode::from(2));
+                    }
+                    Response::Overlap { area: other, holder } => {
+                        println!("OVERLAP: '{area}' path-overlaps '{other}' leased by '{holder}' — coordinate first (status / SESSION-SYNC)");
+                        return Ok(ExitCode::from(2));
+                    }
+                    _ => {} // unexpected → fall through to the Floor
+                }
+            }
             match store.claim(id, area, why, overlap_policy())? {
                 ClaimOutcome::Claimed => {
                     println!("CLAIMED {area}");
@@ -119,6 +153,35 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // Optional fencing Floor: `release <id> <area> --fence <N>` refuses if the
             // lease's fence has advanced (a reclaim happened) since the caller acquired.
             let expected_fence = flag_value(rest, "--fence").and_then(|v| v.parse::<u64>().ok());
+            // M3L.2 Strong tier: mediate through the daemon when up, else the Floor.
+            if let Some(resp) = mediate(
+                &store,
+                Request::Release {
+                    id: id.to_string(),
+                    area: area.to_string(),
+                    fence: expected_fence,
+                },
+            ) {
+                match resp {
+                    Response::Released => {
+                        println!("released {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::NoLease => {
+                        println!("no lease on {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::NotYours { holder } => {
+                        println!("REFUSED: '{area}' is held by '{holder}', not '{id}' — not releasing");
+                        return Ok(ExitCode::from(2));
+                    }
+                    Response::FenceStale { current } => {
+                        println!("REFUSED: '{area}' fence advanced to {current} (your authority is stale) — not releasing");
+                        return Ok(ExitCode::from(2));
+                    }
+                    _ => {} // unexpected → fall through to the Floor
+                }
+            }
             match store.release(id, area, expected_fence)? {
                 ReleaseOutcome::Released => {
                     println!("released {area}");

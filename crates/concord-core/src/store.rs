@@ -232,8 +232,9 @@ impl Store {
     /// atomic step on a plain filesystem, so a reclaim landing in the gap between the
     /// holder/fence read and the `remove_dir_all` is theoretically possible. It closes
     /// the common reclaim-after-pause case (the woken stale holder is rejected); the
-    /// airtight version is the daemon-mediated path (M2.3), where check-and-apply runs
-    /// in the daemon's single thread. See ADR-0001 §Consequences.
+    /// airtight version is the daemon-mediated path (M3L.2 for claim/release, M2.3 for
+    /// merge-lock), where check-and-apply runs in the daemon's single thread. See
+    /// ADR-0001 §Consequences.
     pub fn release(
         &self,
         id: &str,
@@ -316,7 +317,7 @@ impl Store {
 
     /// `merge-unlock <id>`: release the merge gate — but only if `id` holds it
     /// (ownership enforcement; the shell would unlock unconditionally). Same residual
-    /// TOCTOU note as [`Store::release`]; the airtight path is daemon-mediated (M2.3).
+    /// TOCTOU note as [`Store::release`]; the airtight path is daemon-mediated.
     pub fn merge_unlock(&self, id: &str) -> Result<MergeUnlockOutcome> {
         let dir = &self.paths.merge_lock;
         if !dir.is_dir() {

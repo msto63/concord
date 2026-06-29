@@ -137,6 +137,28 @@ impl ConcordServer {
         description = "Claim a lease on a shared area. Rejects a path-prefix overlap with a live lease (enforced §6)."
     )]
     async fn claim(&self, Parameters(a): Parameters<ClaimArgs>) -> CallToolResult {
+        // Strong tier: airtight daemon-mediated claim when the daemon is up.
+        if let Some(resp) = self.mediate(Request::Claim {
+            id: a.id.clone(),
+            area: a.area.clone(),
+            why: a.why.clone(),
+        }) {
+            return match resp {
+                Response::Claimed => text(format!("CLAIMED {}", a.area)),
+                Response::AlreadyYours => text(format!("already yours: {}", a.area)),
+                Response::Reclaimed { previous } => {
+                    text(format!("RECLAIMED {} (stale holder {previous})", a.area))
+                }
+                Response::ClaimConflict { holder } => {
+                    text(format!("CONFLICT: '{}' is leased by '{holder}'", a.area))
+                }
+                Response::Overlap { area, holder } => text(format!(
+                    "OVERLAP: '{}' path-overlaps '{area}' leased by '{holder}'",
+                    a.area
+                )),
+                _ => err("unexpected daemon response".to_string()),
+            };
+        }
         let store = match self.store() {
             Ok(s) => s,
             Err(e) => return err(e),
@@ -162,6 +184,25 @@ impl ConcordServer {
         description = "Release a lease. Refuses to release a foreign lease (ownership-enforced); with `fence`, refuses if the lease's fence advanced (fencing Floor)."
     )]
     async fn release(&self, Parameters(a): Parameters<ReleaseArgs>) -> CallToolResult {
+        if let Some(resp) = self.mediate(Request::Release {
+            id: a.id.clone(),
+            area: a.area.clone(),
+            fence: a.fence,
+        }) {
+            return match resp {
+                Response::Released => text(format!("released {}", a.area)),
+                Response::NoLease => text(format!("no lease on {}", a.area)),
+                Response::NotYours { holder } => text(format!(
+                    "REFUSED: '{}' held by '{holder}', not '{}'",
+                    a.area, a.id
+                )),
+                Response::FenceStale { current } => text(format!(
+                    "REFUSED: '{}' fence advanced to {current} (your authority is stale)",
+                    a.area
+                )),
+                _ => err("unexpected daemon response".to_string()),
+            };
+        }
         let store = match self.store() {
             Ok(s) => s,
             Err(e) => return err(e),

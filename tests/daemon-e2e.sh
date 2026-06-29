@@ -115,6 +115,28 @@ check3 "Floor fallback (no daemon)" "$o5" "$e5" "MERGE LOCK acquired" 0
 
 rm -rf "$W3"
 
+# ── 4. M3L.2: daemon-mediated claim/release (airtight, Floor TOCTOU closed) ──
+# With the daemon up, claim/release also route through its single-thread serialization
+# point. Verify mediated acquire / overlap-reject / foreign-release-refuse / release.
+W4m=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
+CD4m="$W4m/coord"; SY4m="$W4m/SYNC.md"; mkdir -p "$CD4m"
+CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$CC" register a "sess a" >/dev/null
+CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$CC" register b "sess b" >/dev/null
+CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$DD" >"$W4m/daemon.log" 2>&1 &
+DPID4=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$CD4m/concordd.sock" ] && break; sleep 0.3; done
+run4() { CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$CC" "$@"; }
+m1=$(run4 claim a kernel/src/embedded "parent")            && f1=0 || f1=$?
+m2=$(run4 claim b kernel/src/embedded/usbd "child overlap") && f2=0 || f2=$?
+m3=$(run4 release b kernel/src/embedded "not mine")         && f3=0 || f3=$?
+m4=$(run4 release a kernel/src/embedded "done")             && f4=0 || f4=$?
+kill "$DPID4" 2>/dev/null || true; wait "$DPID4" 2>/dev/null || true
+check3 "mediated claim (acquire)"            "$m1" "$f1" "CLAIMED kernel/src/embedded" 0
+check3 "mediated claim overlap REJECTED"     "$m2" "$f2" "OVERLAP" 2
+check3 "mediated foreign release REFUSED"    "$m3" "$f3" "REFUSED" 2
+check3 "mediated release (owner)"            "$m4" "$f4" "released kernel/src/embedded" 0
+rm -rf "$W4m"
+
 echo ""
 if [ "$fail" = 0 ]; then echo "DAEMON E2E: ALL PASS"; else echo "DAEMON E2E: FAILURES"; fi
 exit $fail
