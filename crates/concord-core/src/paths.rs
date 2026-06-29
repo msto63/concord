@@ -51,29 +51,45 @@ pub struct Paths {
     pub ttl: u64,
 }
 
+/// Bootstrap overrides for [`Paths::resolve_with`] — the two values config cannot define
+/// (they locate the config itself). Each is `None` to fall back to the git-toplevel
+/// convention. The binary computes these from `--coord`/`--project` flags, the user-global
+/// `[projects]` map, or (deprecated, with a warning) a legacy env var.
+#[derive(Debug, Clone, Default)]
+pub struct Overrides {
+    pub coord: Option<PathBuf>,
+    pub sync: Option<PathBuf>,
+    pub project: Option<PathBuf>,
+}
+
 impl Paths {
-    /// Resolve paths from the environment exactly as the shell does, using `start`
-    /// (typically the current directory) as the basis for git-toplevel discovery.
+    /// Resolve paths by **convention only** (no environment): `<repo>-coord/` and
+    /// `<repo>-SESSION-SYNC.md` as siblings of the git toplevel discovered from `start`.
+    /// F-config: env reading is retired — the binary passes explicit overrides via
+    /// [`Paths::resolve_with`].
     pub fn resolve(start: &Path) -> Paths {
-        let top = git_toplevel(start).unwrap_or_else(|| start.to_path_buf());
+        Paths::resolve_with(start, &Overrides::default())
+    }
 
-        let coord = first_env(&["CONCORD_DIR", "AIS_COORD_DIR"])
-            .map(PathBuf::from)
+    /// Resolve paths from the git-toplevel convention, with explicit `overrides` taking
+    /// precedence. `ttl` defaults to [`DEFAULT_TTL`] (the binary sets it from config).
+    pub fn resolve_with(start: &Path, overrides: &Overrides) -> Paths {
+        // The convention basis is the project root: an explicit `--project` override if
+        // given (so `--project P` derives `P-coord`), else the git toplevel from `start`.
+        let top = overrides
+            .project
+            .clone()
+            .unwrap_or_else(|| git_toplevel(start).unwrap_or_else(|| start.to_path_buf()));
+
+        let coord = overrides
+            .coord
+            .clone()
             .unwrap_or_else(|| sibling(&top, "-coord"));
-
-        let sync = first_env(&["CONCORD_SYNC", "AIS_SYNC_FILE"])
-            .map(PathBuf::from)
+        let sync = overrides
+            .sync
+            .clone()
             .unwrap_or_else(|| sibling(&top, "-SESSION-SYNC.md"));
-
-        let ttl = env::var("AIS_COORD_TTL")
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .unwrap_or(DEFAULT_TTL);
-
-        // The project root: explicit env, else the git toplevel discovered from `start`.
-        let project = first_env(&["CONCORD_PROJECT", "AIS_PROJECT_DIR"])
-            .map(PathBuf::from)
-            .unwrap_or_else(|| top.clone());
+        let project = top.clone();
 
         Paths {
             sessions: coord.join("sessions"),
@@ -86,7 +102,7 @@ impl Paths {
             coord,
             sync,
             project,
-            ttl,
+            ttl: DEFAULT_TTL,
         }
     }
 
@@ -133,14 +149,6 @@ impl Paths {
     }
 }
 
-/// Return the first set, non-empty environment variable from `names`.
-fn first_env(names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .filter_map(|n| env::var(n).ok())
-        .find(|v| !v.is_empty())
-}
-
 /// `<dirname top>/<basename top><suffix>` — e.g. `~/Projects/ais` + `-coord`
 /// ⇒ `~/Projects/ais-coord`. Matches `$(dirname "$_top")/$(basename "$_top")<suffix>`.
 fn sibling(top: &Path, suffix: &str) -> PathBuf {
@@ -153,8 +161,9 @@ fn sibling(top: &Path, suffix: &str) -> PathBuf {
 }
 
 /// Run `git rev-parse --show-toplevel` from `start`, returning the toplevel path on
-/// success. Mirrors `git rev-parse --show-toplevel 2>/dev/null || pwd`.
-fn git_toplevel(start: &Path) -> Option<PathBuf> {
+/// success. Mirrors `git rev-parse --show-toplevel 2>/dev/null || pwd`. Public so the
+/// binary can resolve the convention coord dir / `[projects]` map key (F-config).
+pub fn git_toplevel(start: &Path) -> Option<PathBuf> {
     let out = Command::new("git")
         .arg("-C")
         .arg(start)

@@ -12,6 +12,7 @@ name = "concordd"
 path = "src/main.rs"
 
 [dependencies]
+concord-config = { path = "../concord-config" }
 concord-core = { path = "../concord-core" }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"

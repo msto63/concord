@@ -8,25 +8,31 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use concord_core::config::Config;
 use concord_core::{Paths, Store};
 
 /// Default permission flags for a spawned worker session (full access — the same level
-/// the coordinator runs at, on the operator's own machine). Override via env.
-fn claude_flags() -> Vec<String> {
-    std::env::var("CONCORD_CLAUDE_FLAGS")
-        .unwrap_or_else(|_| "--dangerously-skip-permissions".to_string())
+/// the coordinator runs at, on the operator's own machine). From `[launcher] claude_flags`.
+fn claude_flags(cfg: &Config) -> Vec<String> {
+    cfg.launcher
+        .claude_flags
         .split_whitespace()
         .map(String::from)
         .collect()
 }
 
 /// The coordinator/steward id (gets the coordinator kickoff, not the worker one).
-/// Case-insensitive (`hub == HUB`); override via `CONCORD_COORDINATOR_ID`.
-fn coordinator_id() -> String {
-    std::env::var("CONCORD_COORDINATOR_ID").unwrap_or_else(|_| "hub".to_string())
+/// Case-insensitive (`hub == HUB`); from `[escalation] coordinator`.
+fn coordinator_id(cfg: &Config) -> String {
+    cfg.escalation.coordinator.clone()
 }
-fn is_coordinator(id: &str) -> bool {
-    id.eq_ignore_ascii_case(&coordinator_id())
+fn is_coordinator(id: &str, cfg: &Config) -> bool {
+    id.eq_ignore_ascii_case(&coordinator_id(cfg))
+}
+
+/// Load the effective config for a launcher command (keyed off the coord dir).
+fn launcher_config(paths: &Paths) -> Config {
+    concord_config::load(&paths.coord)
 }
 
 /// Resolve a session's worktree. Standard convention: `<repo-parent>/<repo>-<id-lower>`.
@@ -74,11 +80,11 @@ fn coordinator_kickoff_prompt(id: &str, sync: &str) -> String {
     format!("You are Concord coordinator session {id} (neutral steward, NOT a worker). Read CLAUDE.md (Concord block) + the HANDOFF and any open ### … -> {id} directives in {sync}. You wait for NO GO and take NO code terrain. Set up your coordinator self-tick NOW by running exactly this command:\n/loop {loop_p}\nThen take up coordination: assess the situation (tools/coord.sh status + prose channel), acknowledge open READY/STATUS so every worker knows you are present, in MUSTER MODE hold the GOs until the operator says \"GO free\" and then roll out the dispatch plan (### {id} -> <id> (GO: <task>)). You are the single voice operator->{id}->sessions: assign, sequence on the vision critical path, arbitrate ownership/merges (merge-lock). Escalate real direction questions to the operator; interactive prompts are yours only.")
 }
 
-fn kickoff_for(id: &str, sync: &str) -> String {
-    if is_coordinator(id) {
+fn kickoff_for(id: &str, sync: &str, cfg: &Config) -> String {
+    if is_coordinator(id, cfg) {
         coordinator_kickoff_prompt(id, sync)
     } else {
-        worker_kickoff_prompt(id, &coordinator_id(), sync)
+        worker_kickoff_prompt(id, &coordinator_id(cfg), sync)
     }
 }
 
@@ -99,10 +105,11 @@ pub fn cmd_start(paths: &Paths, id: &str, print: bool) -> ExitCode {
         );
         paths.project.clone()
     };
+    let cfg = launcher_config(paths);
     let sync = paths.sync.to_string_lossy().into_owned();
-    let prompt = kickoff_for(id, &sync);
-    let flags = claude_flags();
-    let role = if is_coordinator(id) {
+    let prompt = kickoff_for(id, &sync, &cfg);
+    let flags = claude_flags(&cfg);
+    let role = if is_coordinator(id, &cfg) {
         "coordinator · takes up coordination directly (no GO wait)"
     } else {
         "worker · announces READY, waits for the coordinator's GO"
@@ -115,24 +122,36 @@ pub fn cmd_start(paths: &Paths, id: &str, print: bool) -> ExitCode {
         let _ = store.log(id, "concord-start (current terminal)");
     }
 
-    let envs = [
-        ("CONCORD_ID", id.to_string()),
-        ("CONCORD_DIR", paths.coord.to_string_lossy().into_owned()),
-        ("CONCORD_SYNC", sync.clone()),
-        ("CONCORD_PROJECT", paths.project.to_string_lossy().into_owned()),
-    ];
+    // F-config: env is retired. Bind the session id to its worktree via an idbind marker
+    // (the hooks read `<coord>/idbind/<slug(worktree)>`), so no CONCORD_ID env is needed.
+    write_idbind(paths, &worktree, id);
 
     if print {
         println!("▶ would start session {id} · worktree: {} · {role}", worktree.display());
-        println!("  env: {}", envs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
+        println!("  idbind: {} = {id}", idbind_path(paths, &worktree).display());
         println!("  exec: claude {} <kickoff-prompt>", flags.join(" "));
         println!("  prompt-file: {}", pf.display());
         println!("  ── kickoff prompt ──\n{prompt}");
         return ExitCode::SUCCESS;
     }
 
-    println!("▶ Session {id} in DIESEM Terminal · Worktree: {} · CONCORD_ID={id} · volle Rechte · {role}.", worktree.display());
-    spawn_claude(&worktree, &flags, &prompt, &envs)
+    println!("▶ Session {id} in DIESEM Terminal · Worktree: {} · volle Rechte · {role}.", worktree.display());
+    spawn_claude(&worktree, &flags, &prompt, &[])
+}
+
+/// The idbind marker path for a worktree (F-config): `<coord>/idbind/<slug(worktree)>`.
+/// The hooks derive the session id from cwd → this file, so the spawned session needs no
+/// `CONCORD_ID` environment variable.
+fn idbind_path(paths: &Paths, worktree: &Path) -> PathBuf {
+    let key = worktree.to_string_lossy().replace(['/', ' '], "_");
+    paths.coord.join("idbind").join(key)
+}
+fn write_idbind(paths: &Paths, worktree: &Path, id: &str) {
+    let p = idbind_path(paths, worktree);
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&p, format!("{id}\n"));
 }
 
 /// Build and run `claude <flags> <prompt>` in `worktree` with the Concord env. On Unix
@@ -246,7 +265,7 @@ pub fn cmd_resume(paths: &Paths, id: &str) -> ExitCode {
 
 /// `concord stop <id>` — ask a session (via the prose channel) to stop cleanly.
 pub fn cmd_stop(store: &Store, id: &str) -> ExitCode {
-    let coord = coordinator_id();
+    let coord = coordinator_id(&launcher_config(store.paths()));
     let _ = store.sync(
         &coord,
         id,
@@ -298,9 +317,10 @@ mod tests {
     #[test]
     fn coordinator_is_case_insensitive() {
         // default coordinator id is "hub"
-        assert!(is_coordinator("hub"));
-        assert!(is_coordinator("HUB"));
-        assert!(!is_coordinator("a"));
+        let cfg = Config::default();
+        assert!(is_coordinator("hub", &cfg));
+        assert!(is_coordinator("HUB", &cfg));
+        assert!(!is_coordinator("a", &cfg));
     }
 
     #[test]
@@ -315,11 +335,12 @@ mod tests {
 
     #[test]
     fn kickoff_picks_role_and_substitutes() {
-        let wk = kickoff_for("a", "/x/sync.md");
+        let cfg = Config::default();
+        let wk = kickoff_for("a", "/x/sync.md", &cfg);
         assert!(wk.contains("worker session a"));
         assert!(wk.contains("/x/sync.md"));
         assert!(wk.contains("### a -> hub (READY"));
-        let co = kickoff_for("hub", "/x/sync.md");
+        let co = kickoff_for("hub", "/x/sync.md", &cfg);
         assert!(co.contains("coordinator session hub"));
     }
 }

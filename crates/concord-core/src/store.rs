@@ -809,9 +809,9 @@ impl Store {
     /// pending directive overdue by `ttl` (spaced per redeliver), either re-deliver it
     /// (under K misses) or auto-escalate (at K misses, severity `High`). Returns what to
     /// re-deliver (the daemon does the inbox append) and which escalations were raised.
-    pub fn tick_acks(&self, ttl: u64, k: u32) -> Result<AckTickReport> {
+    pub fn tick_acks(&self, ttl: u64, k: u32, coordinator: &str) -> Result<AckTickReport> {
         let mut report = AckTickReport::default();
-        let coord = self.coordinator();
+        let coord = coordinator.to_string();
         for name in sorted_entries(&self.paths.acks)? {
             let id = name.strip_suffix(".pending").unwrap_or(&name).to_string();
             let mut items = self.read_pending(&id)?;

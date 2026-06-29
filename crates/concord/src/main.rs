@@ -28,12 +28,46 @@ use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::{Message, MessageKind};
 use concord_core::escalation::ResolveOutcome;
 use concord_core::store::{
-    ClaimOutcome, HoldStatus, LeaseCheck, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy,
-    ReleaseOutcome, ResourceOutcome, ResourceReleaseOutcome, StatusReport, Store,
+    ClaimOutcome, HoldStatus, LeaseCheck, MergeLockOutcome, MergeUnlockOutcome, ReleaseOutcome,
+    ResourceOutcome, ResourceReleaseOutcome, StatusReport, Store,
 };
 use concord_core::{Paths, Result};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// A commented sample `config.toml` written by `concord init` (F-config). Every value is
+/// the built-in default; uncomment + edit to override. `config.toml` > built-in defaults;
+/// environment variables are retired (deprecated, honored-with-warning for one release).
+const SAMPLE_CONFIG: &str = r#"# Concord configuration (F-config). Project config; lives in <coord>/config.toml.
+# Precedence: this file > ~/.config/concord/config.toml > built-in defaults. No env vars.
+# Every key below is the DEFAULT — uncomment + edit to override.
+
+[leases]
+# stale_ttl = 1800           # seconds with no heartbeat before a session is stale
+# overlap_policy = "reject"  # "reject" (path-overlap enforced) | "shell" (exact-slug only)
+# strict = false             # P1 capability-strict edit guard (deny edits to un-leased files)
+
+[daemon]
+# enabled = true             # route consequential ops through the daemon (airtight) when up
+
+[launcher]
+# claude_flags = "--dangerously-skip-permissions"
+# worktree_pattern = "{repo}-{id}"
+
+[escalation]
+# coordinator = "hub"        # default escalation target; gets the coordinator kickoff
+# ack_ttl = 900              # seconds before an un-ACK'd directive is re-delivered
+# redeliver_max = 2          # re-deliveries before an auto-escalation (severity "high")
+# auto_severity = "high"
+
+[resources]
+# port_base = 5900           # qemu-port pool: slot i -> port_base + i
+# default_slots = 1
+
+# User-global only (~/.config/concord/config.toml): bootstrap map of project -> coord dir.
+# [projects]
+# "/path/to/your-repo" = "/path/to/your-repo-coord"
+"#;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -48,8 +82,12 @@ fn main() -> ExitCode {
 
 /// Dispatch one invocation. Returns the process exit code.
 fn run(args: &[String]) -> Result<ExitCode> {
-    let cmd = args.first().map(String::as_str).unwrap_or("status");
-    let rest = &args[args.len().min(1)..];
+    // F-config: pull the global bootstrap flags (--coord/--project/--id) out first so the
+    // verb parsers see a clean argv. `--id` is accepted (bootstrap symmetry; the verbs take
+    // an explicit id) but otherwise unused by the CLI itself.
+    let (gcoord, gproject, _gid, cleaned) = extract_global_flags(args);
+    let cmd = cleaned.first().map(String::as_str).unwrap_or("status");
+    let rest = &cleaned[cleaned.len().min(1)..];
 
     // Additive: version flags (coord.sh has none; harmless for parity).
     if matches!(cmd, "version" | "--version" | "-v") {
@@ -57,7 +95,32 @@ fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let store = Store::open(Paths::from_cwd())?;
+    // F-config bootstrap: env is retired. The coord dir / project root resolve by
+    // CONVENTION (git-toplevel `<repo>-coord`), with precedence: --coord flag > legacy env
+    // (deprecated, honored-with-warning to keep existing setups working) > the user-global
+    // `[projects]` map > convention. Everything else lives in `config.toml`.
+    let (mut overrides, warns) = concord_config::legacy_env_overrides();
+    for w in &warns {
+        eprintln!("{w}");
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let top = concord_core::paths::git_toplevel(&cwd).unwrap_or_else(|| cwd.clone());
+    if overrides.coord.is_none() {
+        // user-global [projects] map: project-root → coord-dir.
+        if let Some(mapped) = concord_config::projects_map().get(&top.to_string_lossy().to_string()) {
+            overrides.coord = Some(std::path::PathBuf::from(mapped));
+        }
+    }
+    if let Some(c) = gcoord {
+        overrides.coord = Some(std::path::PathBuf::from(c));
+    }
+    if let Some(p) = gproject {
+        overrides.project = Some(std::path::PathBuf::from(p));
+    }
+    let mut paths = Paths::resolve_with(&cwd, &overrides);
+    let config = concord_config::load(&paths.coord);
+    paths.ttl = config.leases.stale_ttl;
+    let store = Store::open(paths)?;
 
     match cmd {
         "register" => {
@@ -179,14 +242,17 @@ fn run(args: &[String]) -> Result<ExitCode> {
         }
 
         "init" => {
-            // Bootstrap a project's coordination state (idempotent). Resolve paths from
-            // --project when given, else the cwd convention; scaffold dirs+sync+ledger;
+            // Bootstrap a project's coordination state (idempotent). Paths are already
+            // resolved (global --coord/--project + convention); scaffold dirs+sync+ledger;
             // optionally register a comma-separated --ids list.
-            let init_store = match flag_value(rest, "--project") {
-                Some(p) => Store::open(Paths::resolve(std::path::Path::new(p)))?,
-                None => store,
-            };
+            let init_store = store;
             init_store.init()?;
+            // F-config: drop a commented sample config.toml (documents the schema +
+            // defaults) if none exists. Never overwrites an edited one.
+            let cfg_path = init_store.paths().coord.join("config.toml");
+            if !cfg_path.exists() {
+                let _ = std::fs::write(&cfg_path, SAMPLE_CONFIG);
+            }
             let ids: Vec<&str> = flag_value(rest, "--ids")
                 .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default();
@@ -281,6 +347,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // M3L.2 Strong tier: route through the daemon (airtight check-and-apply)
             // when it is up; the Floor (direct, RejectOverlap default) otherwise.
             if let Some(resp) = mediate(
+                config.daemon.enabled,
                 &store,
                 Request::Claim {
                     id: id.to_string(),
@@ -312,7 +379,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
                     _ => {} // unexpected → fall through to the Floor
                 }
             }
-            match store.claim(id, area, why, overlap_policy())? {
+            match store.claim(id, area, why, config.leases.overlap_policy)? {
                 ClaimOutcome::Claimed => {
                     println!("CLAIMED {area}");
                     Ok(ExitCode::SUCCESS)
@@ -353,6 +420,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let expected_fence = flag_value(rest, "--fence").and_then(|v| v.parse::<u64>().ok());
             // M3L.2 Strong tier: mediate through the daemon when up, else the Floor.
             if let Some(resp) = mediate(
+                config.daemon.enabled,
                 &store,
                 Request::Release {
                     id: id.to_string(),
@@ -408,6 +476,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // Strong tier: route through the daemon when it is up (atomic check-and-
             // apply at the single serialization point); otherwise the Floor (direct FS).
             if let Some(resp) = mediate(
+                config.daemon.enabled,
                 &store,
                 Request::MergeLock {
                     id: id.to_string(),
@@ -448,7 +517,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
 
         "merge-unlock" => {
             let id = require(rest, 0, "session id")?;
-            if let Some(resp) = mediate(&store, Request::MergeUnlock { id: id.to_string() }) {
+            if let Some(resp) = mediate(config.daemon.enabled, &store, Request::MergeUnlock { id: id.to_string() }) {
                 match resp {
                     Response::Released => {
                         println!("merge lock released");
@@ -489,7 +558,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // P2 default (block-on-conflict); --strict = P1 (capability-strict).
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
-            let strict = has_flag(rest, "--strict");
+            let strict = config.leases.strict || has_flag(rest, "--strict");
             match store.check_lease(id, area, strict)? {
                 LeaseCheck::Allow => {
                     println!("ALLOW {area}");
@@ -560,7 +629,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let severity = concord_core::escalation::Severity::parse(sev_tok)
                 .ok_or(concord_core::ConcordError::MissingArg("valid severity (low|medium|high|critical)"))?;
             let about = pos.get(2..).map(|s| s.join(" ")).unwrap_or_default();
-            let to = flag_value(rest, "--to").map(str::to_string).unwrap_or_else(|| store.coordinator());
+            let to = flag_value(rest, "--to").map(str::to_string).unwrap_or_else(|| config.escalation.coordinator.clone());
             let reference = flag_value(rest, "--ref");
             let seq = store.escalate(id, &to, severity, &about, reference)?;
             println!("ESCALATED #{seq} [{}] → {to}", severity.as_str());
@@ -655,17 +724,6 @@ fn run(args: &[String]) -> Result<ExitCode> {
             print_usage();
             Ok(ExitCode::FAILURE)
         }
-    }
-}
-
-/// Read the overlap policy from the environment. Default = `RejectOverlap`: the
-/// path-prefix overlap check is the core WP12 §6 fix and the coordinator's STEER is
-/// "fix the bug in M1, don't replicate it". Set `CONCORD_STRICT_OVERLAP=0` to fall
-/// back to shell behaviour (no overlap detection) if ever needed for a pure drop-in.
-fn overlap_policy() -> OverlapPolicy {
-    match std::env::var("CONCORD_STRICT_OVERLAP").ok().as_deref() {
-        Some("0") | Some("false") | Some("no") => OverlapPolicy::ParityShell,
-        _ => OverlapPolicy::RejectOverlap,
     }
 }
 
@@ -841,11 +899,8 @@ fn symbol_claim_advisories(store: &Store, area: &str, claimer: &str) {
 /// `None` when there is no daemon, the connection failed, or it returned an error — in
 /// all of which the caller falls back to the Floor (direct FS). `CONCORD_NO_DAEMON=1`
 /// forces the Floor unconditionally.
-fn mediate(store: &Store, req: Request) -> Option<Response> {
-    if matches!(
-        std::env::var("CONCORD_NO_DAEMON").ok().as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    ) {
+fn mediate(daemon_enabled: bool, store: &Store, req: Request) -> Option<Response> {
+    if !daemon_enabled {
         return None;
     }
     let sock = store.paths().coord.join(SOCKET_NAME);
@@ -863,6 +918,24 @@ fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
 /// True if a bare `--flag` is present anywhere in `rest`.
 fn has_flag(rest: &[String], flag: &str) -> bool {
     rest.iter().any(|a| a == flag)
+}
+
+/// Pull the global bootstrap flags out of argv (F-config), returning
+/// `(--coord, --project, --id, remaining-args)`. Stripping them up front keeps the verb
+/// parsers unchanged. Each consumes its following value.
+fn extract_global_flags(args: &[String]) -> (Option<String>, Option<String>, Option<String>, Vec<String>) {
+    let (mut coord, mut project, mut id) = (None, None, None);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--coord" => { coord = args.get(i + 1).cloned(); i += 2; }
+            "--project" => { project = args.get(i + 1).cloned(); i += 2; }
+            "--id" => { id = args.get(i + 1).cloned(); i += 2; }
+            _ => { out.push(args[i].clone()); i += 1; }
+        }
+    }
+    (coord, project, id, out)
 }
 
 /// True if `--kind resource` selects the F2 resource-semaphore namespace.
