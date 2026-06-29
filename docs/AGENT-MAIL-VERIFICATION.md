@@ -6,7 +6,7 @@
 > actual code, not the README or the description-based competitive note. Factual, no advocacy —
 > the stay-vs-refocus decision is the operator's.
 >
-> Commissioned by `hub` to verify the claims in `COMPETITIVE-LANDSCAPE.md` *at the code*, with the
+> Commissioned by `hub` to verify the competitive-landscape claims (survey archived locally) *at the code*, with the
 > decisive question being **enforced vs. advisory** coordination (Concord's vision dividing line).
 
 ## TL;DR — verdict table

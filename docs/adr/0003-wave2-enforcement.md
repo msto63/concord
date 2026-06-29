@@ -1,9 +1,9 @@
-# ADR-0003: Wave 2 — Enforcement-Härtung
+# ADR-0003: Wave 2 — Enforcement Hardening
 
 - **Status:** Accepted (drafted by `concord-w`, reviewed + vision-framed by `hub`, operator sign-off 2026-06; implementation F1-first)
 - **Date:** 2026-06
-- **Refs:** grounded in [`FEATURE-RESEARCH.md`](../FEATURE-RESEARCH.md) (feature-mining, 2026-06-29) ·
-  landscape in [`COMPETITIVE-LANDSCAPE.md`](../COMPETITIVE-LANDSCAPE.md) ·
+- **Refs:** grounded in an operator-commissioned feature-mining pass (2026-06-29, archived locally) ·
+  competitive landscape (operator-commissioned, archived locally) ·
   continues the enforced-core thesis of [ADR-0002](0002-refocus-enforced-core.md) ·
   CLAUDE.md (Concord protocol + vision guard-rail) · ROADMAP
 
@@ -15,7 +15,7 @@ symbol/AST level** (tree-sitter); singleton merge-lock; **fencing tokens** (Floo
 Strong = daemon-mediated); the push-daemon (notify, per-session inbox-demux); a typed MCP surface;
 the launcher; multi-project; cross-platform distribution; and the **autonomous coordinator `hub`**.
 
-An operator-commissioned feature-mining pass ([`FEATURE-RESEARCH.md`](../FEATURE-RESEARCH.md))
+An operator-commissioned feature-mining pass (archived locally)
 surveyed agentic-coding peers (Agent Mail, Gastown, wit, agent-kanban, Power Loom, …) and the
 Claude Code harness itself. Three findings drive this wave:
 
@@ -49,7 +49,7 @@ selects strictly along that axis.
 
 ## Decision
 
-Adopt **Wave 2 — Enforcement-Härtung**: five features, sequenced, each a 🟢 vision-strengthening pick
+Adopt **Wave 2 — Enforcement Hardening**: five features, sequenced, each a 🟢 vision-strengthening pick
 from the research's ADOPT tier. F1 first (top lever; cures "going dark"). Each ships as its own
 PLAN→build→verify slice under `hub`; one PR per feature (or per coherent sub-slice), no speculative
 batching.
@@ -263,9 +263,8 @@ not a new core:
 
 ## Sources
 
-- [`FEATURE-RESEARCH.md`](../FEATURE-RESEARCH.md) — feature-mining research (catalog A–F, prioritized
-  recommendation), this repo.
-- [`COMPETITIVE-LANDSCAPE.md`](../COMPETITIVE-LANDSCAPE.md) — landscape survey, this repo.
+- Feature-mining research (catalog A–F, prioritized recommendation) — operator-commissioned, archived locally.
+- Competitive landscape survey — operator-commissioned, archived locally.
 - Claude Code Hooks (all events): https://code.claude.com/docs/en/hooks
 - Plan-mode is not enforced: https://blog.sondera.ai/p/claude-codes-plan-mode-isnt-read
 - OTel / observability: https://code.claude.com/docs/en/agent-sdk/observability · ccusage: https://github.com/ryoppippi/ccusage

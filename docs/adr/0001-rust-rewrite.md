@@ -3,13 +3,13 @@
 - **Status:** Proposed (draft by session `concord-w`; awaiting `hub` review + operator sign-off)
 - **Date:** 2026-06
 - **Refs:** [ROADMAP §11](../ROADMAP.md) · BACKLOG WP12 (adopted: M1+M2+M3), supersedes WP11;
-  folds WP7 (§9), WP8 (§6), WP9 (§7) into M3 · design [`WP12-RUST-PORT.md`](../WP12-RUST-PORT.md) ·
-  research [`WP12-RESEARCH.md`](../WP12-RESEARCH.md)
+  folds WP7 (§9), WP8 (§6), WP9 (§7) into M3 · design + research notes (operator-commissioned;
+  kept in the local archive, not published)
 
 > This ADR establishes the ADR practice for the Concord repository (see
 > [`0000-template.md`](0000-template.md)). It is written in English to match the
-> repository's public documentation (README/MANUAL/ROADMAP/BACKLOG); the WP12 design
-> and research notes it cites are in German.
+> repository's public documentation (README/MANUAL/ROADMAP/BACKLOG); the design and
+> research notes it draws on are kept in the operator's local archive, not published.
 
 ## Context
 
@@ -50,7 +50,7 @@ what makes M6 (Concord-on-`ais`) a coherent north star, not a slogan. Where pari
 shell and the vision conflict, the vision wins; M1 already chose vision-mode defaults
 (RejectOverlap, correct escaping) rather than deferring them.
 
-**Prior art consulted** (full notes + sources in `WP12-RESEARCH.md`):
+**Prior art consulted** (full notes + sources in the operator-commissioned research, archived locally):
 - *Leases + TTL + stale-reclaim* are modelled by etcd (Grant/KeepAlive, attached keys
   auto-deleted when the keepalive stops), ZooKeeper (ephemeral znodes), and Consul
   (session-bound locks) — all the same shape as Concord's "no heartbeat > TTL ⇒ lease
@@ -189,7 +189,7 @@ vision.
 by keeping it **optional** with the FS state authoritative and functional without it.
 Coexistence risks Shell↔Rust drift — mitigated by the parity harness as a CI/pre-push
 gate. `rmcp`'s API is still moving across majors, and `cargo-dist`'s maintenance status
-should be re-checked before adoption (both flagged open in `WP12-RESEARCH.md`).
+should be re-checked before adoption (both flagged open in the archived research notes).
 
 **Fencing has a residual TOCTOU window in the Floor tier (accepted).** The daemon-free
 Floor (M2.2) enforces fencing by a check-then-commit on the filesystem

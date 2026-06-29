@@ -11,6 +11,15 @@ for the enforced release process.
 
 ## [Unreleased]
 
+### Documentation
+- **Publication polish.** All project documentation is now English. The README is rewritten
+  in plain, jargon-light language covering every feature (incl. the autonomous coordinator
+  and symbol/AST-level locking) with no internal codenames. Internal German research/design
+  drafts (competitive landscape, feature-mining, the original port research/plan) moved to a
+  local, git-ignored archive (off-GitHub); the ADRs that cited them keep their decisions and
+  external sources, with internal links softened so nothing dangles. `BACKLOG.md` and
+  ADR-0003 translated to English. No code or version change.
+
 ## [0.11.0] - 2026-06-29
 
 Wave 2 — F5: enforced signature contracts. The one Peer-collaboration CLAUDE.md permits
