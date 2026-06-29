@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "concord"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "concord-ast",
  "concord-core",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "concord-ast"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "streaming-iterator",
  "tree-sitter",
@@ -116,11 +116,11 @@ dependencies = [
 
 [[package]]
 name = "concord-core"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "concord-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "concord-core",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "concordd"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "concord-core",
  "notify",

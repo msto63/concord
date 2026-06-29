@@ -12,5 +12,5 @@ name = "concord"
 path = "src/main.rs"
 
 [dependencies]
-concord-ast = { version = "0.3.0", path = "../concord-ast" }
+concord-ast = { path = "../concord-ast" }
 concord-core = { path = "../concord-core" }
