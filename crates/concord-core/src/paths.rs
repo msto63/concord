@@ -40,6 +40,9 @@ pub struct Paths {
     pub escalations: PathBuf,
     /// `$COORD/telemetry` — the F4 per-session normalized telemetry log (`<id>.jsonl`).
     pub telemetry: PathBuf,
+    /// `$COORD/contracts` — the F5 enforced signature-contract records (one dir per
+    /// `<file>:<symbol>` contract).
+    pub contracts: PathBuf,
     /// `$COORD/intents.jsonl`.
     pub log: PathBuf,
     /// `$COORD/merge.lock` (singleton merge gate).
@@ -100,6 +103,7 @@ impl Paths {
             acks: coord.join("acks"),
             escalations: coord.join("escalations"),
             telemetry: coord.join("telemetry"),
+            contracts: coord.join("contracts"),
             log: coord.join("intents.jsonl"),
             merge_lock: coord.join("merge.lock"),
             coord,
@@ -154,6 +158,11 @@ impl Paths {
     /// The normalized telemetry log for a session (F4).
     pub fn telemetry_file(&self, id: &str) -> PathBuf {
         self.telemetry.join(format!("{}.jsonl", crate::slug::slug(id)))
+    }
+
+    /// The directory for a signature contract on `<file>:<symbol>` (F5).
+    pub fn contract_dir(&self, key: &str) -> PathBuf {
+        self.contracts.join(crate::slug::slug(key))
     }
 }
 
@@ -215,6 +224,7 @@ mod tests {
             acks: PathBuf::from("/x/ais-coord/acks"),
             escalations: PathBuf::from("/x/ais-coord/escalations"),
             telemetry: PathBuf::from("/x/ais-coord/telemetry"),
+            contracts: PathBuf::from("/x/ais-coord/contracts"),
             log: PathBuf::from("/x/ais-coord/intents.jsonl"),
             merge_lock: PathBuf::from("/x/ais-coord/merge.lock"),
             sync: PathBuf::from("/x/ais-SESSION-SYNC.md"),

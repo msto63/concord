@@ -115,6 +115,23 @@ pub struct StatusReport {
     pub sessions_dir_empty: bool,
 }
 
+/// A registered signature contract (F5): the agreed interface for `<file>:<symbol>`, the
+/// one Peer-collaboration CLAUDE.md permits, mechanized. The `signature` is the normalized
+/// declaration (computed by the binary via `concord-ast`); the store just persists + reads
+/// it, so `concord-core` stays free of the tree-sitter dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Contract {
+    /// `<file>:<symbol>` (same key scheme as a symbol-lease).
+    pub key: String,
+    /// The agreed normalized signature.
+    pub signature: String,
+    /// Who registered it.
+    pub by: String,
+    /// The counter-party (`--with`), for provenance; empty if none.
+    pub with: String,
+    pub since: String,
+}
+
 /// The decision from [`Store::check_lease`] — the `PreToolUse` deny verdict (F1/A1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LeaseCheck {
@@ -847,6 +864,72 @@ impl Store {
             }
         }
         Ok(report)
+    }
+
+    // ─────────────────────────── signature contracts (F5) ───────────────────────────
+
+    /// Register (or, idempotently, update) the agreed signature contract for `key`
+    /// (`<file>:<symbol>`). Returns `true` if newly created, `false` if it updated an
+    /// existing contract (an explicit renegotiation). The `signature` is the normalized
+    /// declaration the binary extracted via `concord-ast`.
+    pub fn register_contract(
+        &self,
+        key: &str,
+        signature: &str,
+        by: &str,
+        with: &str,
+    ) -> Result<bool> {
+        let dir = self.paths.contract_dir(key);
+        let is_new = !dir.is_dir();
+        mkdirs(&dir)?;
+        self.write_atomic(&dir.join("key"), &format!("{key}\n"))?;
+        self.write_atomic(&dir.join("signature"), &format!("{signature}\n"))?;
+        self.write_atomic(&dir.join("by"), &format!("{by}\n"))?;
+        self.write_atomic(&dir.join("with"), &format!("{with}\n"))?;
+        self.write_atomic(&dir.join("since"), &format!("{}\n", self.now))?;
+        let verb = if is_new { "contract" } else { "contract-update" };
+        self.append_log(by, &format!("{verb}: {key} = {signature}"))?;
+        Ok(is_new)
+    }
+
+    /// Read the contract for `key`, or `None` if none is registered.
+    pub fn contract(&self, key: &str) -> Result<Option<Contract>> {
+        let dir = self.paths.contract_dir(key);
+        if !dir.is_dir() {
+            return Ok(None);
+        }
+        Ok(Some(Contract {
+            key: read_trimmed(&dir.join("key")).unwrap_or_else(|| key.to_string()),
+            signature: read_trimmed(&dir.join("signature")).unwrap_or_default(),
+            by: read_trimmed(&dir.join("by")).unwrap_or_default(),
+            with: read_trimmed(&dir.join("with")).unwrap_or_default(),
+            since: read_trimmed(&dir.join("since")).unwrap_or_default(),
+        }))
+    }
+
+    /// All registered contracts (for `contracts` / `contract-check` / status).
+    pub fn contracts(&self) -> Result<Vec<Contract>> {
+        let mut out = Vec::new();
+        for slug in sorted_entries(&self.paths.contracts)? {
+            let key = read_trimmed(&self.paths.contracts.join(&slug).join("key"));
+            if let Some(k) = key {
+                if let Some(c) = self.contract(&k)? {
+                    out.push(c);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Drop a contract (renegotiation away / no longer enforced). Returns whether one existed.
+    pub fn release_contract(&self, key: &str, by: &str) -> Result<bool> {
+        let dir = self.paths.contract_dir(key);
+        if !dir.is_dir() {
+            return Ok(false);
+        }
+        fs::remove_dir_all(&dir).map_err(|e| ConcordError::io(&dir, e))?;
+        self.append_log(by, &format!("contract-release: {key}"))?;
+        Ok(true)
     }
 
     // ──────────────────────────── telemetry / health (F4) ────────────────────────────

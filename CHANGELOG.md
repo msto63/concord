@@ -11,6 +11,38 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-29
+
+Wave 2 — F5: enforced signature contracts. The one Peer-collaboration CLAUDE.md permits
+(negotiating an interface) gets teeth — two agents agree on a `<file>:<symbol>` signature,
+and a commit/merge gate blocks a change to it without renegotiation. **This completes
+Wave 2 (F1·F2·F3·F-config·F4·F5).** (ADR-0003 F5.)
+
+### Added
+- **`concord_ast::signature()`** — the normalized signature an interface contract pins:
+  for a function/method, the declaration up to the body delimiter (`{` for Rust/TS, the
+  body `:` for Python) so changing the *body* does not break the contract; for a
+  type/struct/class/enum/interface, the full declaration (the shape itself is the
+  interface). Whitespace-collapsed (reformatting is not a change).
+- **Contract store + verbs.** `concord contract <id> <file>:<symbol> [--with <other>] [why]`
+  snapshots the current signature as the agreed contract (the act of registering = the
+  agreement reached in prose; `--with` records the counter-party). `contract --update`
+  renegotiates, `contract-release` drops it, `contracts` lists them. Stored in
+  `<coord>/contracts/<file:symbol>/` (same key scheme as symbol-leases) as readable text —
+  `concord-core` persists it; the binary extracts via `concord-ast`, so the core stays
+  dependency-free.
+- **The gate.** `concord contract-check [<file>]` re-extracts each contract's current
+  signature and **exits non-zero** if any was changed without renegotiation. Wired as a
+  **git pre-commit hook** (`scripts/install-hooks.sh`) *and* a **merge-lock precondition**
+  (the coordinator-level gate; override with `--no-contract-check`). **Fail-open:** an
+  unreadable file/symbol is never counted as broken. Surfaced in `status`/`dash`
+  (CONTRACTS).
+- New CI smoke `tests/contracts.sh` + `signature()` unit test + contract CRUD integration.
+
+### Notes
+- F5 is a different axis from F1: **F1** gates *edits* by lease at the keystroke (who may
+  edit); **F5** gates the agreed *interface* at commit/merge (did you break a contract).
+
 ## [0.10.0] - 2026-06-29
 
 Wave 2 — F4: hub telemetry. The coordinator becomes **telemetry-driven** instead of

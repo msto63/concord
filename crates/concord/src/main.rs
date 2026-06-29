@@ -481,6 +481,18 @@ fn run(args: &[String]) -> Result<ExitCode> {
         "merge-lock" => {
             let id = require(rest, 0, "session id")?;
             let why = opt(rest, 1).unwrap_or("");
+            // F5 precondition: a merge must not proceed while an agreed signature contract
+            // is broken (unless explicitly overridden). Refuse before acquiring the lock.
+            if !has_flag(rest, "--no-contract-check") {
+                let broken = broken_contracts(&store, None)?;
+                if !broken.is_empty() {
+                    for (key, want, got) in &broken {
+                        eprintln!("CONTRACT BROKEN: {key}\n  agreed:  {want}\n  current: {got}");
+                    }
+                    eprintln!("merge-lock refused: {} broken contract(s) — renegotiate + `contract --update`, or override with --no-contract-check.", broken.len());
+                    return Ok(ExitCode::from(2));
+                }
+            }
             // Strong tier: route through the daemon when it is up (atomic check-and-
             // apply at the single serialization point); otherwise the Floor (direct FS).
             if let Some(resp) = mediate(
@@ -687,6 +699,73 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
+        "contract" => {
+            // F5: register/update the agreed signature contract for <file>:<symbol>.
+            //   concord contract <id> <file>:<symbol> [--with <other>] [why]
+            let id = require(rest, 0, "session id")?;
+            let key = require(rest, 1, "contract key <file>:<symbol>")?;
+            let with = flag_value(rest, "--with").unwrap_or("");
+            match current_signature(store.paths(), key) {
+                Some(sig) => {
+                    let is_new = store.register_contract(key, &sig, id, with)?;
+                    let verb = if is_new { "CONTRACT" } else { "CONTRACT-UPDATED" };
+                    println!("{verb} {key} = {sig}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => {
+                    println!("cannot read signature for '{key}' (file/symbol not found or unsupported language)");
+                    Ok(ExitCode::from(2))
+                }
+            }
+        }
+
+        "contract-release" => {
+            let id = require(rest, 0, "session id")?;
+            let key = require(rest, 1, "contract key <file>:<symbol>")?;
+            if store.release_contract(key, id)? {
+                println!("CONTRACT-RELEASED {key}");
+            } else {
+                println!("no contract on {key}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        "contracts" => {
+            let cs = store.contracts()?;
+            if cs.is_empty() {
+                println!("no contracts");
+            } else {
+                for c in &cs {
+                    let w = if c.with.is_empty() { String::new() } else { format!(" with {}", c.with) };
+                    println!("{} (by {}{}) = {}", c.key, c.by, w, c.signature);
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        "contract-check" => {
+            // F5 gate: re-extract each contract's current signature and compare. Exit 2 if
+            // any agreed contract was changed without renegotiation. Fail-open: an
+            // unreadable file/symbol is NOT counted as broken (no block on uncertainty).
+            // Optional <file> filter narrows the check (the pre-commit hook passes staged
+            // files).
+            let filter = opt(rest, 0);
+            let broken = broken_contracts(&store, filter)?;
+            if broken.is_empty() {
+                println!("contracts OK");
+                Ok(ExitCode::SUCCESS)
+            } else {
+                for (key, want, got) in &broken {
+                    eprintln!("CONTRACT BROKEN: {key}\n  agreed:  {want}\n  current: {got}");
+                }
+                eprintln!(
+                    "{} contract(s) changed without renegotiation — re-agree with the counter-party, then `concord contract <id> <key> --update` (or `contract-release`).",
+                    broken.len()
+                );
+                Ok(ExitCode::from(2))
+            }
+        }
+
         "sync" => {
             let id = require(rest, 0, "session id")?;
             let target = require(rest, 1, "target (e.g. K, ALLE, \"C + B\")")?;
@@ -810,6 +889,15 @@ fn print_status(store: &Store) -> Result<()> {
         for (id, count, oldest) in &pending {
             let age = now.saturating_sub(*oldest) / 60;
             println!("  {id:<28} {count} un-ACK'd (oldest {age}m)");
+        }
+    }
+    // F5: registered signature contracts (only when any exist).
+    let contracts = store.contracts()?;
+    if !contracts.is_empty() {
+        println!("CONTRACTS:");
+        for c in &contracts {
+            let w = if c.with.is_empty() { String::new() } else { format!(", {}", c.with) };
+            println!("  {:<32} by {}{}", c.key, c.by, w);
         }
     }
     // F4: telemetry-driven health (only when any session has telemetry).
@@ -947,6 +1035,37 @@ fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
 /// True if a bare `--flag` is present anywhere in `rest`.
 fn has_flag(rest: &[String], flag: &str) -> bool {
     rest.iter().any(|a| a == flag)
+}
+
+/// The current normalized signature of `<file>:<symbol>` from the working tree (F5), or
+/// `None` if the file/symbol can't be read or the language is unsupported (fail-open).
+fn current_signature(paths: &Paths, key: &str) -> Option<String> {
+    let (file, symbol) = concord_core::slug::split_symbol(key);
+    let symbol = symbol?; // contracts are on symbols, not whole files
+    let lang = concord_ast::Lang::from_path(file)?;
+    let src = std::fs::read_to_string(paths.project.join(file)).ok()?;
+    let sym = concord_ast::resolve_symbol(lang, &src, symbol)?;
+    Some(concord_ast::signature(lang, &src, &sym))
+}
+
+/// Contracts whose current working-tree signature differs from the agreed one (F5 gate).
+/// `(key, agreed, current)`. Fail-open: an unreadable file/symbol is skipped, not broken.
+/// `filter`, when set, limits to contracts whose key starts with it (e.g. a staged file).
+fn broken_contracts(store: &Store, filter: Option<&str>) -> Result<Vec<(String, String, String)>> {
+    let mut broken = Vec::new();
+    for c in store.contracts()? {
+        if let Some(f) = filter {
+            if !c.key.starts_with(f) {
+                continue;
+            }
+        }
+        if let Some(cur) = current_signature(store.paths(), &c.key) {
+            if cur != c.signature {
+                broken.push((c.key, c.signature, cur));
+            }
+        }
+    }
+    Ok(broken)
 }
 
 /// Pull the global bootstrap flags out of argv (F-config), returning

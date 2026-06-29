@@ -14,6 +14,30 @@ use concord_core::store::{
 use concord_core::telemetry::{HealthFlag, TelemetryPoint};
 use concord_core::{Paths, Store};
 
+/// F5: a signature contract is registered, read back, updated (renegotiation), and released.
+#[test]
+fn contract_register_update_release() {
+    let (root, paths) = temp_paths();
+    let s = store_at(&paths, 1000);
+
+    assert!(s.register_contract("src/lib.rs:foo", "fn foo(x: u32) -> bool", "a", "b").unwrap(), "new");
+    let c = s.contract("src/lib.rs:foo").unwrap().unwrap();
+    assert_eq!(c.signature, "fn foo(x: u32) -> bool");
+    assert_eq!(c.by, "a");
+    assert_eq!(c.with, "b");
+    assert_eq!(s.contracts().unwrap().len(), 1);
+
+    // Re-register = explicit renegotiation (returns false = updated).
+    assert!(!s.register_contract("src/lib.rs:foo", "fn foo(x: u32, y: u32) -> bool", "a", "b").unwrap());
+    assert_eq!(s.contract("src/lib.rs:foo").unwrap().unwrap().signature, "fn foo(x: u32, y: u32) -> bool");
+
+    assert!(s.release_contract("src/lib.rs:foo", "a").unwrap());
+    assert!(s.contract("src/lib.rs:foo").unwrap().is_none());
+    assert!(!s.release_contract("src/lib.rs:foo", "a").unwrap(), "already gone");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// F4: recorded telemetry drives the health verdict; the B3 watchdog auto-escalates a
 /// telemetry-idle session that still holds a lease (reusing F3), and clears on recovery.
 #[test]
@@ -237,6 +261,7 @@ fn temp_paths() -> (PathBuf, Paths) {
         acks: coord.join("acks"),
         escalations: coord.join("escalations"),
         telemetry: coord.join("telemetry"),
+        contracts: coord.join("contracts"),
         log: coord.join("intents.jsonl"),
         merge_lock: coord.join("merge.lock"),
         coord: coord.clone(),

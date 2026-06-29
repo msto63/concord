@@ -319,6 +319,7 @@ mod tests {
             acks: PathBuf::new(),
             escalations: PathBuf::new(),
             telemetry: PathBuf::new(),
+            contracts: PathBuf::new(),
             log: PathBuf::new(),
             merge_lock: PathBuf::new(),
             sync: PathBuf::new(),
