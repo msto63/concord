@@ -3,7 +3,7 @@
 **File-based coordination for multi-session AI development teams.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](CHANGELOG.md)
 
 Concord lets **several AI coding sessions** (e.g. [Claude Code](https://claude.com/claude-code))
 work the **same repository in parallel** without clobbering each other — no server, no
@@ -32,8 +32,11 @@ A human (the operator) talks to the coordinator; the coordinator dispatches the 
 ## Quick start
 
 ```bash
-# 1. Build + put the CLI on your PATH
-cargo install --path crates/concord        # or: cargo build --release && ln -s …/target/release/concord ~/bin/
+# 1. Install the CLI (any one):
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/msto63/concord/main/scripts/install.sh | sh   # macOS / Linux
+#   cargo install --git https://github.com/msto63/concord concord                  # any platform
+#   …or download a prebuilt archive from the GitHub Releases page (incl. Windows .zip)
 
 # 2. Install the Claude Code hooks (statusline, registry, status injection, guards).
 #    The hook scripts ship *inside* the binary — no repo checkout needed.

@@ -1,0 +1,102 @@
+name: Release
+
+# Self-contained release pipeline (M4.2). Fires on a version tag, gates on version
+# discipline, cross-builds the support matrix, and attaches archives + checksums to a
+# GitHub Release. Equivalent to a `dist`-generated workflow (see [workspace.metadata.dist]
+# in Cargo.toml); regenerate with `dist generate` once `dist` is on the operator's machine.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write   # create the GitHub Release + upload assets
+
+jobs:
+  # Gate: VERSION ↔ CHANGELOG ↔ Cargo.toml ↔ tag must all agree before anything builds.
+  version-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version discipline (also checks tag == v$VERSION)
+        run: bash scripts/check-version.sh
+
+  build:
+    needs: version-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} -p concord -p concordd -p concord-mcp
+
+      - name: Package (unix)
+        if: matrix.ext == 'tar.gz'
+        shell: bash
+        run: |
+          dir="concord-${{ matrix.target }}"
+          mkdir "$dir"
+          cp target/${{ matrix.target }}/release/concord target/${{ matrix.target }}/release/concordd target/${{ matrix.target }}/release/concord-mcp "$dir/"
+          cp README.md LICENSE CHANGELOG.md "$dir/"
+          tar czf "$dir.tar.gz" "$dir"
+          shasum -a 256 "$dir.tar.gz" > "$dir.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          $dir = "concord-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/concord.exe","target/${{ matrix.target }}/release/concordd.exe","target/${{ matrix.target }}/release/concord-mcp.exe" $dir
+          Copy-Item README.md,LICENSE,CHANGELOG.md $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower() + "  $dir.zip" | Out-File -Encoding ascii "$dir.zip.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: concord-${{ matrix.target }}
+          path: |
+            concord-${{ matrix.target }}.${{ matrix.ext }}
+            concord-${{ matrix.target }}.${{ matrix.ext }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -11,7 +11,19 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-29
+
+Cross-platform + distribution (S3/M4) — Concord is now shippable.
+
 ### Added
+- **Distribution pipeline (M4.2).** A self-contained, version-gated GitHub Actions release
+  workflow (`.github/workflows/release.yml`): on a `vX.Y.Z` tag it checks version discipline,
+  cross-builds the support matrix (aarch64/x86_64 macOS, x86_64 Linux, x86_64 Windows-MSVC),
+  and attaches archives + SHA-256 checksums of all three binaries (`concord`, `concordd`,
+  `concord-mcp`) to a GitHub Release. A `curl … | sh` installer (`scripts/install.sh`) detects
+  the platform, verifies the checksum, and installs to `~/.local/bin`. `dist` config lives in
+  `[workspace.metadata.dist]` for richer installers once `dist` is adopted. CI workflow
+  (`ci.yml`) runs build/clippy/test/version + a Windows `cargo check`.
 - **Windows portability (M4.1).** The Unix-domain-socket code in `concord-core::ipc`,
   `concordd`, and `concord-mcp` is now `cfg(unix)`-gated; off Unix, `ipc::mediate` is a
   no-op so every consequential op falls back to the enforced **Floor** (FS-authoritative
