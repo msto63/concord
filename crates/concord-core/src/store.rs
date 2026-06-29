@@ -18,6 +18,9 @@ use std::path::Path;
 
 use crate::clock;
 use crate::error::{ConcordError, Result};
+use crate::escalation::{
+    AckTickReport, EscStatus, Escalation, Pending, Redeliver, ResolveOutcome, Severity,
+};
 use crate::message::Message;
 use crate::model::{LedgerEntry, Lease, MergeLock, Session};
 use crate::paths::Paths;
@@ -639,6 +642,228 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    // ───────────────────────── ack-tracking + escalation (F3) ─────────────────────────
+
+    /// The default escalation target: the coordinator. Read from `<coord>/coordinator`
+    /// if present (project-configurable), else `"hub"`. Workers cannot reach the operator
+    /// directly (CLAUDE.md), so an escalation routes to the coordinator, who forwards.
+    pub fn coordinator(&self) -> String {
+        read_trimmed(&self.paths.coord.join("coordinator")).unwrap_or_else(|| "hub".to_string())
+    }
+
+    /// Raise a tracked escalation (E2). Returns its seq. Race-safe: the seq is allocated
+    /// by an atomic `mkdir` (a collision just tries the next number), so concurrent
+    /// escalators never clobber each other.
+    pub fn escalate(
+        &self,
+        from: &str,
+        to: &str,
+        severity: Severity,
+        about: &str,
+        reference: Option<&str>,
+    ) -> Result<u64> {
+        mkdirs(&self.paths.escalations)?;
+        let mut seq = self.max_escalation_seq()? + 1;
+        loop {
+            let dir = self.paths.escalation_dir(seq);
+            match fs::create_dir(&dir) {
+                Ok(()) => {
+                    self.write_atomic(&dir.join("from"), &format!("{from}\n"))?;
+                    self.write_atomic(&dir.join("to"), &format!("{to}\n"))?;
+                    self.write_atomic(&dir.join("severity"), &format!("{}\n", severity.as_str()))?;
+                    self.write_atomic(&dir.join("about"), &format!("{about}\n"))?;
+                    self.write_atomic(&dir.join("created"), &format!("{}\n", self.now))?;
+                    self.write_atomic(&dir.join("status"), "open\n")?;
+                    if let Some(r) = reference {
+                        self.write_atomic(&dir.join("ref"), &format!("{r}\n"))?;
+                    }
+                    self.append_log(from, &format!("escalate #{seq} [{}] → {to}: {about}", severity.as_str()))?;
+                    return Ok(seq);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => seq += 1,
+                Err(e) => return Err(ConcordError::io(&dir, e)),
+            }
+        }
+    }
+
+    fn max_escalation_seq(&self) -> Result<u64> {
+        Ok(sorted_entries(&self.paths.escalations)?
+            .iter()
+            .filter_map(|n| n.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// Resolve (close) an escalation. Ownership is not enforced — anyone (typically the
+    /// coordinator) may resolve — but the resolver/note is recorded for provenance.
+    pub fn resolve_escalation(
+        &self,
+        resolver: &str,
+        seq: u64,
+        note: &str,
+    ) -> Result<ResolveOutcome> {
+        let dir = self.paths.escalation_dir(seq);
+        if !dir.is_dir() {
+            return Ok(ResolveOutcome::NotFound);
+        }
+        if read_trimmed(&dir.join("status")).as_deref() == Some("resolved") {
+            return Ok(ResolveOutcome::AlreadyResolved);
+        }
+        self.write_atomic(&dir.join("status"), "resolved\n")?;
+        self.write_atomic(&dir.join("resolved"), &format!("{}\n", self.now))?;
+        self.write_atomic(&dir.join("resolver"), &format!("{resolver}: {note}\n"))?;
+        self.append_log(resolver, &format!("resolve escalation #{seq}: {note}"))?;
+        Ok(ResolveOutcome::Resolved)
+    }
+
+    /// All escalations (open first, newest within each), for `status`/`escalations`.
+    pub fn escalations(&self) -> Result<Vec<Escalation>> {
+        let mut out = Vec::new();
+        for name in sorted_entries(&self.paths.escalations)? {
+            let Ok(seq) = name.parse::<u64>() else { continue };
+            let dir = self.paths.escalation_dir(seq);
+            if !dir.is_dir() {
+                continue;
+            }
+            let status = EscStatus::parse(&read_trimmed(&dir.join("status")).unwrap_or_default());
+            let resolved = match (
+                read_trimmed(&dir.join("resolved")).and_then(|s| s.parse::<u64>().ok()),
+                read_trimmed(&dir.join("resolver")),
+            ) {
+                (Some(ts), Some(by)) => Some((ts, by)),
+                _ => None,
+            };
+            out.push(Escalation {
+                seq,
+                from: read_trimmed(&dir.join("from")).unwrap_or_default(),
+                to: read_trimmed(&dir.join("to")).unwrap_or_default(),
+                severity: Severity::parse(&read_trimmed(&dir.join("severity")).unwrap_or_default())
+                    .unwrap_or(Severity::Medium),
+                about: read_trimmed(&dir.join("about")).unwrap_or_default(),
+                created: read_trimmed(&dir.join("created")).and_then(|s| s.parse().ok()).unwrap_or(0),
+                status,
+                resolved,
+                reference: read_trimmed(&dir.join("ref")),
+            });
+        }
+        // Open escalations first, then by recency (highest seq first within a status).
+        out.sort_by(|a, b| {
+            let oa = (a.status != EscStatus::Resolved) as u8;
+            let ob = (b.status != EscStatus::Resolved) as u8;
+            ob.cmp(&oa).then(b.seq.cmp(&a.seq))
+        });
+        Ok(out)
+    }
+
+    /// Record a directive addressed to `to` (from `from`) as pending an ack (E3),
+    /// assigning the next per-recipient seq. Called by the daemon as it routes directives
+    /// (each directive is routed exactly once via the persisted offset, so no cross-run
+    /// dedup is needed). Returns the assigned seq.
+    pub fn add_pending(&self, to: &str, from: &str) -> Result<u64> {
+        let mut items = self.read_pending(to)?;
+        let seq = items.iter().map(|p| p.seq).max().unwrap_or(0) + 1;
+        items.push(Pending { seq, from: from.to_string(), first_seen: self.now, redelivers: 0, escalated: false });
+        self.write_pending(to, &items)?;
+        Ok(seq)
+    }
+
+    /// Clear all of `id`'s pending directives — it posted (it is alive and caught up),
+    /// the derived-ack watermark (reuse of the A3 predicate). Also the effect of an
+    /// explicit [`Store::ack`].
+    pub fn clear_pending(&self, id: &str) -> Result<()> {
+        let f = self.paths.pending_file(id);
+        match fs::remove_file(&f) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(ConcordError::io(&f, e)),
+        }
+    }
+
+    /// Explicit ack (E3): clear `id`'s pending directives and log it. Complements the
+    /// derived watermark — a clean machine/MCP action.
+    pub fn ack(&self, id: &str, note: &str) -> Result<u32> {
+        let n = self.read_pending(id)?.len() as u32;
+        self.clear_pending(id)?;
+        self.append_log(id, &format!("ack ({n} pending cleared): {note}"))?;
+        Ok(n)
+    }
+
+    /// Per-session pending summary for `status`: `(id, count, oldest_first_seen)`.
+    pub fn pending_summary(&self) -> Result<Vec<(String, u32, u64)>> {
+        let mut out = Vec::new();
+        for name in sorted_entries(&self.paths.acks)? {
+            let id = name.strip_suffix(".pending").unwrap_or(&name).to_string();
+            let items = self.read_pending(&id)?;
+            if items.is_empty() {
+                continue;
+            }
+            let oldest = items.iter().map(|p| p.first_seen).min().unwrap_or(self.now);
+            out.push((id, items.len() as u32, oldest));
+        }
+        Ok(out)
+    }
+
+    /// One ack-timeout tick (F3 active layer; the daemon calls it periodically). For each
+    /// pending directive overdue by `ttl` (spaced per redeliver), either re-deliver it
+    /// (under K misses) or auto-escalate (at K misses, severity `High`). Returns what to
+    /// re-deliver (the daemon does the inbox append) and which escalations were raised.
+    pub fn tick_acks(&self, ttl: u64, k: u32) -> Result<AckTickReport> {
+        let mut report = AckTickReport::default();
+        let coord = self.coordinator();
+        for name in sorted_entries(&self.paths.acks)? {
+            let id = name.strip_suffix(".pending").unwrap_or(&name).to_string();
+            let mut items = self.read_pending(&id)?;
+            let mut changed = false;
+            for p in items.iter_mut() {
+                if p.escalated {
+                    continue;
+                }
+                // Overdue for the next action once `ttl*(redelivers+1)` has elapsed.
+                let due_at = p.first_seen + ttl * (p.redelivers as u64 + 1);
+                if self.now < due_at {
+                    continue;
+                }
+                if p.redelivers >= k {
+                    // K misses → auto-escalate (High) and stop re-delivering.
+                    let about = format!(
+                        "{id} has not ACK'd a directive from {} (seq {}) after {k} redelivers — possible going-dark/stuck",
+                        p.from, p.seq
+                    );
+                    let seq = self.escalate("concordd", &coord, Severity::High, &about, Some(&id))?;
+                    p.escalated = true;
+                    report.escalated.push(seq);
+                } else {
+                    p.redelivers += 1;
+                    report.redelivered.push(Redeliver { to: id.clone(), from: p.from.clone(), seq: p.seq });
+                }
+                changed = true;
+            }
+            if changed {
+                self.write_pending(&id, &items)?;
+            }
+        }
+        Ok(report)
+    }
+
+    fn read_pending(&self, id: &str) -> Result<Vec<Pending>> {
+        let f = self.paths.pending_file(id);
+        match fs::read_to_string(&f) {
+            Ok(body) => Ok(body.lines().filter_map(Pending::parse_line).collect()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(ConcordError::io(&f, e)),
+        }
+    }
+
+    fn write_pending(&self, id: &str, items: &[Pending]) -> Result<()> {
+        let f = self.paths.pending_file(id);
+        if items.is_empty() {
+            let _ = fs::remove_file(&f);
+            return Ok(());
+        }
+        let body: String = items.iter().map(|p| format!("{}\n", p.to_line())).collect();
+        self.write_atomic(&f, &body)
     }
 
     // ──────────────────────────────── log / sync ────────────────────────────────

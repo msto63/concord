@@ -11,6 +11,36 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-29
+
+Wave 2 — F3: ack-tracking + tracked escalation. Two CLAUDE.md prose policies that were
+toothless become **enforced state**: un-ACK'd coordinator directives are re-delivered and
+auto-escalated, and blockers become tracked objects that cannot silently vanish. (ADR-0003 F3.)
+
+### Added
+- **Tracked escalations (E2).** `<coord>/escalations/<seq>/` records (one dir each, like a
+  lease) that **persist until resolved** — the coordinator's real forwarding queue to the
+  operator. `concord escalate <id> <severity> <body> [--to <target>] [--ref R]` (default
+  `--to` = the coordinator, read from `<coord>/coordinator`, fallback `hub`),
+  `concord resolve <id> <seq> [note]`, `concord escalations` (open first). Severity
+  `low|medium|high|critical`.
+- **Ack-tracking (E3).** Per-recipient pending directives in `<coord>/acks/<id>.pending`.
+  **Derived ack** (zero-migration): the daemon clears a session's pending when it posts
+  (the A3 watermark mechanized); plus an explicit `concord ack <id> [note]`. The daemon's
+  active layer (`Store::tick_acks`) **re-delivers** an un-ACK'd directive (bumping the
+  recipient's inbox mtime to wake it) after `TTL_ack` (15 min), and **auto-escalates**
+  (severity `high`) after `K=2` re-deliveries — a session ignoring directives can no longer
+  go dark unnoticed.
+- **Status surface.** `status`/`dash` gain **ESCALATIONS (open)** and **PENDING ACKS**
+  sections.
+- New CI smoke `tests/ack-escalation.sh` + 2 integration tests (escalation lifecycle;
+  re-deliver→auto-escalate timing) + escalation unit tests.
+
+### Notes
+- The TTL re-deliver / auto-escalate is the **daemon's active layer**; the verbs + status
+  work on the Floor (daemon-down) too. **A3's `stop.sh` keeps its own fail-open derivation**
+  (it must work daemon-down); the daemon pending is additive, never an A3 dependency.
+
 ## [0.7.0] - 2026-06-29
 
 Wave 2 — F2: named resource locks / build-slots. The enforced lease primitive now

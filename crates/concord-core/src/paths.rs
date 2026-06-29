@@ -33,6 +33,11 @@ pub struct Paths {
     /// kept separate from `leases/` so resource locks never touch the path/symbol
     /// overlap logic (structurally orthogonal).
     pub resources: PathBuf,
+    /// `$COORD/acks` — the F3 per-recipient pending-directive tracking (`<id>.pending`).
+    pub acks: PathBuf,
+    /// `$COORD/escalations` — the F3 tracked-escalation records (one dir per escalation,
+    /// persisted until resolved).
+    pub escalations: PathBuf,
     /// `$COORD/intents.jsonl`.
     pub log: PathBuf,
     /// `$COORD/merge.lock` (singleton merge gate).
@@ -74,6 +79,8 @@ impl Paths {
             sessions: coord.join("sessions"),
             leases: coord.join("leases"),
             resources: coord.join("resources"),
+            acks: coord.join("acks"),
+            escalations: coord.join("escalations"),
             log: coord.join("intents.jsonl"),
             merge_lock: coord.join("merge.lock"),
             coord,
@@ -113,6 +120,16 @@ impl Paths {
     /// acquire and validated thereafter).
     pub fn resource_capacity_file(&self, name: &str) -> PathBuf {
         self.resource_dir(name).join("capacity")
+    }
+
+    /// The pending-directive tracking file for a recipient (F3).
+    pub fn pending_file(&self, id: &str) -> PathBuf {
+        self.acks.join(format!("{}.pending", crate::slug::slug(id)))
+    }
+
+    /// The directory for escalation record `seq` (F3).
+    pub fn escalation_dir(&self, seq: u64) -> PathBuf {
+        self.escalations.join(seq.to_string())
     }
 }
 
@@ -178,6 +195,8 @@ mod tests {
             sessions: PathBuf::from("/x/ais-coord/sessions"),
             leases: PathBuf::from("/x/ais-coord/leases"),
             resources: PathBuf::from("/x/ais-coord/resources"),
+            acks: PathBuf::from("/x/ais-coord/acks"),
+            escalations: PathBuf::from("/x/ais-coord/escalations"),
             log: PathBuf::from("/x/ais-coord/intents.jsonl"),
             merge_lock: PathBuf::from("/x/ais-coord/merge.lock"),
             sync: PathBuf::from("/x/ais-SESSION-SYNC.md"),
