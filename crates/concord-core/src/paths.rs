@@ -35,6 +35,9 @@ pub struct Paths {
     pub merge_lock: PathBuf,
     /// The prose channel (`<repo>-SESSION-SYNC.md` by default).
     pub sync: PathBuf,
+    /// The project root this coordination state belongs to (`CONCORD_PROJECT` env, or
+    /// the git toplevel). Surfaced by `concord paths` for multi-project tooling.
+    pub project: PathBuf,
     /// Stale window in seconds.
     pub ttl: u64,
 }
@@ -58,6 +61,11 @@ impl Paths {
             .and_then(|v| v.trim().parse::<u64>().ok())
             .unwrap_or(DEFAULT_TTL);
 
+        // The project root: explicit env, else the git toplevel discovered from `start`.
+        let project = first_env(&["CONCORD_PROJECT", "AIS_PROJECT_DIR"])
+            .map(PathBuf::from)
+            .unwrap_or_else(|| top.clone());
+
         Paths {
             sessions: coord.join("sessions"),
             leases: coord.join("leases"),
@@ -65,6 +73,7 @@ impl Paths {
             merge_lock: coord.join("merge.lock"),
             coord,
             sync,
+            project,
             ttl,
         }
     }
@@ -150,6 +159,7 @@ mod tests {
             log: PathBuf::from("/x/ais-coord/intents.jsonl"),
             merge_lock: PathBuf::from("/x/ais-coord/merge.lock"),
             sync: PathBuf::from("/x/ais-SESSION-SYNC.md"),
+            project: PathBuf::from("/x/ais"),
             ttl: DEFAULT_TTL,
         };
         assert_eq!(p.lease_dir("a_b"), Path::new("/x/ais-coord/leases/a_b"));

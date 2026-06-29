@@ -24,6 +24,7 @@ fn temp_paths() -> (PathBuf, Paths) {
         merge_lock: coord.join("merge.lock"),
         coord: coord.clone(),
         sync: root.join("SYNC.md"),
+        project: root.join("proj"),
         ttl: 1800,
     };
     (root, paths)
