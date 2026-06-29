@@ -492,7 +492,8 @@ impl Store {
             }
             let held_area = read_trimmed(&dir.join("area"));
             let (overlaps, same) = match &held_area {
-                Some(ha) => (slug::overlaps(area, ha), ha == area),
+                // S2: symbol-aware composition (path ⊃ symbol, disjoint symbols compatible).
+                Some(ha) => (slug::area_overlaps(area, ha), ha == area),
                 None => {
                     let want = slug::slug(area);
                     (slug_overlaps(&want, &held_slug), want == held_slug)

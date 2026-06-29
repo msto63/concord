@@ -11,6 +11,27 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-29
+
+Symbol-level (AST) leases — the differentiator. Concord can now lease a single symbol
+(`<file>:<symbol>`), not just a file path, and it enforces that lease (prior-art tools
+have symbol granularity but only advisory locks).
+
+### Added
+- **Enforced symbol-level leases (S2.1).** A lease area may be `<file>:<symbol>`, a finer
+  lease *under* the path-lease. Two sessions can hold leases on **disjoint symbols of the
+  same file in parallel** — what a file lease cannot express — while a file path-lease
+  still subsumes any symbol in it (bidirectional), all under the same fence / ownership /
+  daemon-mediated enforcement. (`concord-core::slug::area_overlaps`.)
+- **`concord-ast` crate** — native tree-sitter symbol extraction for **Rust, TypeScript,
+  and Python** (functions/methods/types/classes/…), with byte ranges; and a **Rust call
+  graph** (caller→callee).
+- **`concord symbols <file>`** lists a file's claimable symbols; `claim <file>:<symbol>`
+  validates the symbol exists.
+- **Advisory DEP_CHAIN warning (S2.2).** Claiming a Rust symbol that *calls* a symbol
+  another session holds emits an advisory note (a call edge is a hint, not exclusion — the
+  one genuinely-advisory layer; the lease itself stays enforced).
+
 ## [0.3.0] - 2026-06-29
 
 The Rust migration: Concord is now a single typed Rust binary (CLI + push daemon + MCP

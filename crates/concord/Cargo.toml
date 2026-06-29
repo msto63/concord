@@ -12,4 +12,5 @@ name = "concord"
 path = "src/main.rs"
 
 [dependencies]
+concord-ast = { path = "../concord-ast" }
 concord-core = { path = "../concord-core" }
