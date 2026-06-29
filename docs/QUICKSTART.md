@@ -29,6 +29,10 @@ This creates, next to your repo, an inspectable coordination state:
 `hub` is the coordinator; `a`/`b` are workers. Re-running `init` is safe (idempotent).
 `concord paths` prints the resolved locations (`eval "$(concord paths)"`).
 
+`init` also drops a commented `config.toml` (all defaults) into `<repo>-coord/`. Optional:
+to change a setting, edit it there — or copy the template from a release:
+`cp config.toml.example <repo>-coord/config.toml`. See [MANUAL.md](MANUAL.md) §11.
+
 ## 3. Start a session per terminal
 
 Open one terminal per session and tell Concord who it is via `CONCORD_ID`:

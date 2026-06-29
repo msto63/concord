@@ -1,0 +1,47 @@
+# Concord configuration — example with every setting at its built-in default.
+#
+# Copy this to one of these locations (most specific wins):
+#   1. <repo>-coord/config.toml          — this project only (highest precedence)
+#   2. ~/.config/concord/config.toml     — all projects (user-global)
+#                                          (or $XDG_CONFIG_HOME/concord/config.toml)
+# Precedence: built-in defaults  <  user-global  <  project.
+#
+# Every key below is COMMENTED OUT and shows its DEFAULT — uncomment + edit to change it.
+# Environment variables are no longer the configuration mechanism (a legacy CONCORD_*/AIS_*
+# var is still honored for one release, with a deprecation warning); use this file instead.
+
+[leases]
+# stale_ttl = 1800           # seconds with no heartbeat before a session is considered stale
+# overlap_policy = "reject"  # "reject" = block a claim that overlaps a held lease; "shell" = exact-slug only
+# strict = false             # true = deny edits to files you have not leased (capability-strict)
+
+[daemon]
+# enabled = true             # route consequential ops through the background daemon when it is up
+
+[launcher]
+# claude_flags = "--dangerously-skip-permissions"   # flags passed to `claude` when a session is launched
+# worktree_pattern = "{repo}-{id}"                  # naming convention for per-session worktrees
+
+[escalation]
+# coordinator = "hub"        # the session that receives escalations and the coordinator role
+# ack_ttl = 900              # seconds before an un-acknowledged directive is re-delivered
+# redeliver_max = 2          # re-deliveries before an escalation is auto-raised
+# auto_severity = "high"     # severity of an auto-raised escalation: low | medium | high | critical
+
+[resources]
+# port_base = 5900           # a "qemu-port" pool hands out port_base + slot index
+# default_slots = 1          # default capacity when a resource is claimed without --slots
+
+[telemetry]
+# enabled = false            # consume Claude Code's local OpenTelemetry stream + run the receiver
+# port = 4319                # the local OTLP/HTTP-JSON receiver port (kept off 4317/4318)
+# idle_min = 15              # minutes with no telemetry before a session is flagged IDLE (dark)
+# burn_warn = 20000          # tokens/minute above which a session is flagged BURN
+# reject_storm = 5           # edit-tool reject/deny decisions in loop_window that flag REJECT
+# loop_window = 600          # look-back window (seconds) for the burn / reject / loop heuristics
+
+# ── user-global only (~/.config/concord/config.toml) ──
+# A bootstrap map of project root -> coordination dir, for projects whose coord dir is not
+# the conventional "<repo>-coord" sibling. Not used in a project-level config.
+# [projects]
+# "/path/to/your-repo" = "/path/to/your-repo-coord"

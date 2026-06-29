@@ -206,19 +206,64 @@ Open one tab per session and run `concord start <id>` in each.
 
 ## 11. Configuration
 
-Concord is **project-agnostic**. The CLIs and hooks resolve their state per project:
+All tunables live in **one `config.toml`**. A fully-commented template ships with every
+release (and is in the repo root) as **`config.toml.example`** — every key is shown at its
+built-in default. `concord init` also drops this file into the coordination dir for you.
 
-| Variable | Meaning | Default (by convention) |
+### Where to put it
+
+| Location | Scope | Precedence |
 |---|---|---|
-| `CONCORD_ID` | This session's id | — (set by `concord start`) |
-| `CONCORD_PROJECT` | The repo root | git toplevel of the cwd |
-| `CONCORD_DIR` | Coordination state directory | `<repo>-coord` next to the repo |
-| `CONCORD_SYNC` | Prose channel file | `<repo>-SESSION-SYNC.md` next to the repo |
-| `CONCORD_TTL` | Stale threshold (seconds) | `1800` |
+| `<repo>-coord/config.toml` | this project only | highest |
+| `~/.config/concord/config.toml` (or `$XDG_CONFIG_HOME/concord/config.toml`) | all projects (user-global) | middle |
+| *(built-in defaults)* | — | lowest |
 
-`concord start` exports `CONCORD_DIR` / `CONCORD_SYNC` / `CONCORD_PROJECT` so the (global) hooks
-of that session use the correct project's coordination state. Two projects therefore stay isolated
-by their distinct state directory and channel — **not** by session id (both projects may have an "E").
+Effective config = **built-in defaults ← user-global ← project** (the more specific layer
+wins, per key). To start from the template:
+
+```bash
+cp config.toml.example <repo>-coord/config.toml   # from an unpacked release, then edit
+```
+
+### Settings
+
+| Section | Key | Meaning | Default |
+|---|---|---|---|
+| `[leases]` | `stale_ttl` | Seconds with no heartbeat before a session is stale | `1800` |
+| | `overlap_policy` | `"reject"` (block overlapping claims) or `"shell"` (exact-slug only) | `"reject"` |
+| | `strict` | Deny edits to files you have not leased (capability-strict) | `false` |
+| `[daemon]` | `enabled` | Route consequential ops through the daemon when it is up | `true` |
+| `[launcher]` | `claude_flags` | Flags passed to `claude` at launch | `"--dangerously-skip-permissions"` |
+| | `worktree_pattern` | Per-session worktree naming | `"{repo}-{id}"` |
+| `[escalation]` | `coordinator` | Session that receives escalations + the coordinator role | `"hub"` |
+| | `ack_ttl` | Seconds before an un-ACK'd directive is re-delivered | `900` |
+| | `redeliver_max` | Re-deliveries before an escalation is auto-raised | `2` |
+| | `auto_severity` | Severity of an auto-raised escalation | `"high"` |
+| `[resources]` | `port_base` | A `qemu-port` pool hands out `port_base + slot` | `5900` |
+| | `default_slots` | Default capacity when `--slots` is omitted | `1` |
+| `[telemetry]` | `enabled` | Consume Claude Code's local OTel stream + run the receiver | `false` |
+| | `port` | Local OTLP/HTTP-JSON receiver port | `4319` |
+| | `idle_min` | Minutes with no telemetry before a session is IDLE | `15` |
+| | `burn_warn` | Tokens/minute above which a session is BURN | `20000` |
+| | `reject_storm` | Edit-tool reject/deny decisions in `loop_window` that flag REJECT | `5` |
+| | `loop_window` | Look-back window (seconds) for burn/reject/loop | `600` |
+
+The user-global file may also carry a `[projects]` map (project root → coord dir) for
+projects whose coord dir is not the conventional `<repo>-coord` sibling.
+
+### Bootstrap (the two values config cannot define)
+
+A config file lives *inside* a coordination dir, so two values are resolved before it is
+read — by **convention**, with flags to override:
+
+- **Coordination dir / channel** — the `<repo>-coord/` and `<repo>-SESSION-SYNC.md` siblings
+  of the git toplevel; override with `--coord <dir>` or the user-global `[projects]` map.
+- **Session id** — the worktree name `<repo>-<id>`; override with `--id <id>`. `concord start`
+  also writes an id-bind marker so the hooks need no environment variable.
+
+> **Deprecated:** the old `CONCORD_*` / `AIS_*` environment variables are retired. A still-set
+> one is honored for one release **with a deprecation warning**, then removed; use `config.toml`,
+> the convention, or `--coord`/`--id`/`--project` instead.
 
 ## 12. The automation layer (Claude Code hooks)
 

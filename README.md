@@ -133,6 +133,24 @@ Each session boots into its own worktree, reports that it's ready, and waits for
 coordinator's go-ahead before taking work. Coordination state lives in `<repo>-coord/`
 next to your repo; the human-readable discussion log is `<repo>-SESSION-SYNC.md`.
 
+## Configuration (optional)
+
+Concord works out of the box; every setting has a sensible default. To change one, drop a
+`config.toml` in either place — the more specific wins:
+
+- `<repo>-coord/config.toml` — this project only.
+- `~/.config/concord/config.toml` — all your projects.
+
+A fully-commented `config.toml.example` ships in every release (and `concord init` writes it
+into your coordination dir). Copy it and edit:
+
+```bash
+cp config.toml.example <repo>-coord/config.toml
+```
+
+See **[docs/MANUAL.md](docs/MANUAL.md) §11** for the full list of settings (lease timeouts,
+the coordinator's name, telemetry thresholds, ports, …).
+
 ## Platform support
 
 | Platform | What you get |
