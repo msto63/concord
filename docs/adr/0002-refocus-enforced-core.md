@@ -34,6 +34,13 @@ session cloned and read the code, citing `file:line`) changed the picture:
 So the mechanics are a 2026 commodity; the **enforced vertical and the autonomous coordinator are
 the scarce, vision-aligned assets** — and Concord already holds them in M1+M2.
 
+**Why enforcement is the *forward* bet, not just today's edge.** Advisory coordination is adequate
+while a few cooperative agents share a repo; it degrades exactly as agent autonomy and count grow —
+and as sessions pause, go dormant, or get reclaimed (the split-brain we hit this session with dormant
+sessions is not hypothetical). Enforcement (fencing, airtight serialization) is the structurally
+harder, structurally *necessary* property as multi-agent work scales. Refocusing here is not
+defending a sunk asset; it is betting on where coordination must go.
+
 ## Decision
 
 **Refocus.** Keep M1 + M2 as the enforced core; **re-scope M3 from "full" to "M3-lean"** — retire the
