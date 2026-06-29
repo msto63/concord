@@ -181,6 +181,44 @@ pub fn symbol_path(file: &str, symbol: &str) -> String {
     format!("{file}:{symbol}")
 }
 
+/// The normalized **signature** of a symbol (F5 enforced contracts) — what an interface
+/// contract pins, as opposed to the implementation. For a function/method it is the
+/// declaration up to the body delimiter (`{` for Rust/TS, the `:` for Python), so changing
+/// the *body* does not break the contract; for a type/struct/class/enum/interface it is the
+/// full declaration (the shape itself IS the interface). Whitespace is collapsed so
+/// reformatting is not a contract change.
+pub fn signature(lang: Lang, source: &str, sym: &Symbol) -> String {
+    let text = source.get(sym.start_byte..sym.end_byte).unwrap_or("");
+    let is_fn = sym.kind == "function" || sym.kind == "method";
+    let raw = if is_fn {
+        match lang {
+            Lang::Python => cut_at_body_colon(text),
+            _ => match text.find('{') {
+                Some(p) => &text[..p],
+                None => text, // trait-method decl ending in `;` — keep the whole decl
+            },
+        }
+    } else {
+        text
+    };
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Python: the function body starts at the first `:` at bracket-depth 0 (parameter
+/// annotations' `:` are inside the parens, depth > 0). Returns the text up to it.
+fn cut_at_body_colon(text: &str) -> &str {
+    let mut depth = 0i32;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ':' if depth == 0 => return &text[..i],
+            _ => {}
+        }
+    }
+    text
+}
+
 /// Extract intra-file call edges (Rust): for each call, the callee's bare name and the
 /// enclosing top-level symbol (the caller). Cross-file resolution is out of scope; the
 /// callee name is matched against held symbol-leases for the advisory DEP_CHAIN warning.
@@ -260,6 +298,22 @@ const MAX: u32 = 10;
         for n in ["Auth", "validate_token", "login", "Role", "MAX"] {
             assert!(names.contains(&n.to_string()), "missing {n}");
         }
+    }
+
+    #[test]
+    fn signature_pins_decl_not_body() {
+        // A function's signature stops at the body; reformatting/body changes don't alter it.
+        let s = resolve_rust_symbol(RS, "validate_token").unwrap();
+        assert_eq!(signature(Lang::Rust, RS, &s), "pub fn validate_token(t: &str) -> bool");
+
+        // A struct's signature IS its full shape (the interface).
+        let st = resolve_rust_symbol(RS, "Auth").unwrap();
+        assert_eq!(signature(Lang::Rust, RS, &st), "pub struct Auth { token: String }");
+
+        // Python: cut at the body colon, not the parameter-annotation colons.
+        let py = "def serve(host: str, port: int) -> bool:\n    return True\n";
+        let psym = resolve_symbol(Lang::Python, py, "serve").unwrap();
+        assert_eq!(signature(Lang::Python, py, &psym), "def serve(host: str, port: int) -> bool");
     }
 
     #[test]
