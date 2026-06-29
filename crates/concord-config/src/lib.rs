@@ -286,7 +286,7 @@ mod tests {
     /// defaults (or `concord init`, which embeds the same file).
     #[test]
     fn example_matches_code_defaults() {
-        let example = include_str!("../../../config.toml.example");
+        let example = include_str!("../../../config/config.toml.example");
         // Uncomment lines of the form `# <lower_ident> = <value>` (the real config keys);
         // leave section headers, prose comments, and the quoted `[projects]` entries alone.
         let uncommented: String = example

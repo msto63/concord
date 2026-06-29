@@ -11,6 +11,23 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-06-30
+
+### Changed
+- **`config.toml.example` moved to `config/config.toml.example`.** Still a single source
+  (embedded into `concord init` via `include_str!`); the release archives now mirror it under
+  `config/`, so the copy command is identical everywhere:
+  `cp config/config.toml.example <repo>-coord/config.toml`.
+
+### Documentation
+- **Public docs synced to the v0.11.x reality (code-verified).** README, QUICKSTART, and the
+  MANUAL no longer reference the retired shell tool (`coord.sh`/`bin/concord`), the old `K`
+  coordinator (now `hub`), or `CONCORD_ID`-as-identity. Identity is documented as the
+  worktree-derived id (`concord start <id>` writes an id-bind marker; the `<repo>-<id>` worktree
+  name is the fallback); the `CONCORD_*` env vars are a deprecated bootstrap footnote. The MANUAL
+  CLI reference, setup, and automation sections were rewritten to the real `concord` verbs and
+  `concord init --with-hooks` / `concord install-hooks`. README version badge → 0.11.2.
+
 ## [0.11.1] - 2026-06-29
 
 ### Added
