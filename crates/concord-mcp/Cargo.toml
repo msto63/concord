@@ -1,0 +1,22 @@
+[package]
+name = "concord-mcp"
+description = "Concord MCP server (M3-lean WP9) — the enforced coordination primitives as typed MCP tools."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "concord-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.103"
+concord-core = { path = "../concord-core" }
+rmcp = { version = "1.8.0", features = ["server", "macros", "transport-io"] }
+schemars = "1.2.1"
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std"] }
+# rmcp brings tokio/async; isolated to THIS crate so concord-core/concord/concordd
+# stay std-only. M3-lean exposes only the enforced primitives, not a broad tool surface.

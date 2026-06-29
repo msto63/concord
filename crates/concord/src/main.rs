@@ -19,11 +19,10 @@
 //! Exit codes match the shell: claim CONFLICT and merge-lock-held ⇒ 2; unknown
 //! command ⇒ 1; missing required arg ⇒ 1.
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
+use concord_core::message::{Message, MessageKind};
 use concord_core::store::{
     ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
     StatusReport, Store,
@@ -81,6 +80,40 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
             let why = opt(rest, 2).unwrap_or("");
+            // M3L.2 Strong tier: route through the daemon (airtight check-and-apply)
+            // when it is up; the Floor (direct, RejectOverlap default) otherwise.
+            if let Some(resp) = mediate(
+                &store,
+                Request::Claim {
+                    id: id.to_string(),
+                    area: area.to_string(),
+                    why: why.to_string(),
+                },
+            ) {
+                match resp {
+                    Response::Claimed => {
+                        println!("CLAIMED {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::AlreadyYours => {
+                        println!("already yours: {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::Reclaimed { previous } => {
+                        println!("RECLAIMED {area} (stale holder {previous})");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::ClaimConflict { holder } => {
+                        println!("CONFLICT: '{area}' is leased by '{holder}' — coordinate first (status / SESSION-SYNC)");
+                        return Ok(ExitCode::from(2));
+                    }
+                    Response::Overlap { area: other, holder } => {
+                        println!("OVERLAP: '{area}' path-overlaps '{other}' leased by '{holder}' — coordinate first (status / SESSION-SYNC)");
+                        return Ok(ExitCode::from(2));
+                    }
+                    _ => {} // unexpected → fall through to the Floor
+                }
+            }
             match store.claim(id, area, why, overlap_policy())? {
                 ClaimOutcome::Claimed => {
                     println!("CLAIMED {area}");
@@ -120,6 +153,35 @@ fn run(args: &[String]) -> Result<ExitCode> {
             // Optional fencing Floor: `release <id> <area> --fence <N>` refuses if the
             // lease's fence has advanced (a reclaim happened) since the caller acquired.
             let expected_fence = flag_value(rest, "--fence").and_then(|v| v.parse::<u64>().ok());
+            // M3L.2 Strong tier: mediate through the daemon when up, else the Floor.
+            if let Some(resp) = mediate(
+                &store,
+                Request::Release {
+                    id: id.to_string(),
+                    area: area.to_string(),
+                    fence: expected_fence,
+                },
+            ) {
+                match resp {
+                    Response::Released => {
+                        println!("released {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::NoLease => {
+                        println!("no lease on {area}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    Response::NotYours { holder } => {
+                        println!("REFUSED: '{area}' is held by '{holder}', not '{id}' — not releasing");
+                        return Ok(ExitCode::from(2));
+                    }
+                    Response::FenceStale { current } => {
+                        println!("REFUSED: '{area}' fence advanced to {current} (your authority is stale) — not releasing");
+                        return Ok(ExitCode::from(2));
+                    }
+                    _ => {} // unexpected → fall through to the Floor
+                }
+            }
             match store.release(id, area, expected_fence)? {
                 ReleaseOutcome::Released => {
                     println!("released {area}");
@@ -270,6 +332,33 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
+        "send" => {
+            // First-class typed message (WP7): concord send <from> <to> <kind> [--ref R] <body...>
+            // Delivers a typed message straight to inbox/<to>.jsonl (no prose mirror,
+            // so it never double-delivers via the daemon's prose demux).
+            let reference = flag_value(rest, "--ref").map(str::to_string);
+            let pos = positional_args(rest, &["--ref"]);
+            let from = pos.first().ok_or(concord_core::ConcordError::MissingArg("from"))?;
+            let to = pos.get(1).ok_or(concord_core::ConcordError::MissingArg("to"))?;
+            let kind_tok = pos
+                .get(2)
+                .ok_or(concord_core::ConcordError::MissingArg("kind"))?;
+            let kind = match MessageKind::parse(kind_tok) {
+                Some(k) => k,
+                None => {
+                    println!(
+                        "unknown kind '{kind_tok}' (go|ack|design|arbitration|status|decision|blocked|done|ready|idle|merge-ready|stand-down|note)"
+                    );
+                    return Ok(ExitCode::from(2));
+                }
+            };
+            let body = pos.get(3..).map(|s| s.join(" ")).unwrap_or_default();
+            let msg = Message::new(store.now(), from, to, kind, reference, &body);
+            store.deliver_message(&msg)?;
+            println!("sent {from} → {to} ({})", kind.as_str());
+            Ok(ExitCode::SUCCESS)
+        }
+
         other => {
             println!("unknown command: {other}");
             print_usage();
@@ -336,7 +425,8 @@ Concord — multi-session coordination (Rust port of bin/coord.sh).
   concord merge-lock <id> [why]                  # BEFORE merging (singleton)
   concord merge-unlock <id>                      # after the merge (refuses foreign)
   concord log <id> <event...>                    # record a structured intent
-  concord sync <id> <target> <topic> <body>      # post to the prose channel
+  concord sync <id> <target> <topic> <body>      # post to the prose channel (human log)
+  concord send <from> <to> <kind> [--ref R] <body>  # typed message → inbox/<to>.jsonl (WP7)
   concord version                                # print the Concord version";
     println!("{usage}");
 }
@@ -367,17 +457,7 @@ fn mediate(store: &Store, req: Request) -> Option<Response> {
         return None;
     }
     let sock = store.paths().coord.join(SOCKET_NAME);
-    if !sock.exists() {
-        return None;
-    }
-    let mut stream = UnixStream::connect(&sock).ok()?;
-    writeln!(stream, "{}", req.to_line()).ok()?;
-    let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).ok()?;
-    match Response::parse_line(&line) {
-        Some(Response::Err(_)) | None => None, // daemon hiccup → fall back to Floor
-        other => other,
-    }
+    concord_core::ipc::mediate(&sock, &req)
 }
 
 /// The value following `flag` (e.g. `--fence 7` ⇒ `Some("7")`), or `None`.
@@ -386,4 +466,26 @@ fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
         .position(|a| a == flag)
         .and_then(|i| rest.get(i + 1))
         .map(String::as_str)
+}
+
+/// Positional args, skipping `--flag value` pairs named in `value_flags` and any other
+/// bare `--flag`. Used by `send` to separate from/to/kind/body from `--ref R`.
+fn positional_args(rest: &[String], value_flags: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for a in rest {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if value_flags.contains(&a.as_str()) {
+            skip = true;
+            continue;
+        }
+        if a.starts_with("--") {
+            continue;
+        }
+        out.push(a.clone());
+    }
+    out
 }

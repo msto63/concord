@@ -198,10 +198,12 @@ are not one atomic step, so a reclaim landing in the gap between the check and t
 is theoretically possible. This is **accepted**: the Floor closes the common
 reclaim-after-pause case (a woken stale holder is rejected, and a foreign holder can never
 release/unlock another's lease), and the **airtight** guarantee is the daemon-mediated
-Strong tier (M2.3), where check-and-apply runs in the daemon's single thread at the one
-serialization point. So fencing is "as strong as FS-authority allows when the daemon is
-down, airtight on the mediated path when it is up" — consistent with policy 4 rather than
-pretending the optional daemon gives a guarantee to direct-FS writers.
+Strong tier — extended in **M3L.2 to cover all consequential ops (claim/release as well as
+merge-lock)** — where check-and-apply runs in the daemon's single thread at the one
+serialization point, so the residual window is fully closed when the daemon is up. So
+fencing is "as strong as FS-authority allows when the daemon is down, airtight on the
+mediated path when it is up" — consistent with policy 4 rather than pretending the optional
+daemon gives a guarantee to direct-FS writers.
 
 **Cutover checklist** (ROADMAP §11 step 3, when the binary becomes default and the shell
 is frozen to `bin/legacy/`):
