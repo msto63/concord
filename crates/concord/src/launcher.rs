@@ -270,6 +270,7 @@ mod tests {
             )),
             sessions: PathBuf::new(),
             leases: PathBuf::new(),
+            resources: PathBuf::new(),
             log: PathBuf::new(),
             merge_lock: PathBuf::new(),
             sync: PathBuf::new(),

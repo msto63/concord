@@ -29,6 +29,10 @@ pub struct Paths {
     pub sessions: PathBuf,
     /// `$COORD/leases`.
     pub leases: PathBuf,
+    /// `$COORD/resources` — the F2 named-resource / build-slot semaphore namespace,
+    /// kept separate from `leases/` so resource locks never touch the path/symbol
+    /// overlap logic (structurally orthogonal).
+    pub resources: PathBuf,
     /// `$COORD/intents.jsonl`.
     pub log: PathBuf,
     /// `$COORD/merge.lock` (singleton merge gate).
@@ -69,6 +73,7 @@ impl Paths {
         Paths {
             sessions: coord.join("sessions"),
             leases: coord.join("leases"),
+            resources: coord.join("resources"),
             log: coord.join("intents.jsonl"),
             merge_lock: coord.join("merge.lock"),
             coord,
@@ -92,6 +97,22 @@ impl Paths {
     /// The session file for an id.
     pub fn session_file(&self, id: &str) -> PathBuf {
         self.sessions.join(id)
+    }
+
+    /// The directory for a named resource (F2), keyed by the slugged name.
+    pub fn resource_dir(&self, name: &str) -> PathBuf {
+        self.resources.join(crate::slug::slug(name))
+    }
+
+    /// The directory for slot `i` of a named resource.
+    pub fn resource_slot_dir(&self, name: &str, i: u32) -> PathBuf {
+        self.resource_dir(name).join("slots").join(i.to_string())
+    }
+
+    /// The capacity marker file for a named resource (declared N, persisted on first
+    /// acquire and validated thereafter).
+    pub fn resource_capacity_file(&self, name: &str) -> PathBuf {
+        self.resource_dir(name).join("capacity")
     }
 }
 
@@ -156,6 +177,7 @@ mod tests {
             coord: PathBuf::from("/x/ais-coord"),
             sessions: PathBuf::from("/x/ais-coord/sessions"),
             leases: PathBuf::from("/x/ais-coord/leases"),
+            resources: PathBuf::from("/x/ais-coord/resources"),
             log: PathBuf::from("/x/ais-coord/intents.jsonl"),
             merge_lock: PathBuf::from("/x/ais-coord/merge.lock"),
             sync: PathBuf::from("/x/ais-SESSION-SYNC.md"),
