@@ -98,6 +98,35 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(launcher::cmd_stop(&store, id))
         }
 
+        "symbols" => {
+            // List the top-level symbols a (Rust) file defines — the claimable
+            // symbol-leases under that path (S2).
+            let file = require(rest, 0, "file")?;
+            let path = store.paths().project.join(file);
+            match std::fs::read_to_string(&path) {
+                Ok(src) => {
+                    let syms = concord_ast::extract_rust_symbols(&src);
+                    if syms.is_empty() {
+                        println!("(no symbols found in {file})");
+                    }
+                    for s in &syms {
+                        println!(
+                            "{file}:{}  [{}]  lines {}-{}",
+                            s.name,
+                            s.kind,
+                            s.start_row + 1,
+                            s.end_row + 1
+                        );
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                Err(e) => {
+                    println!("cannot read {}: {e}", path.display());
+                    Ok(ExitCode::from(2))
+                }
+            }
+        }
+
         "paths" => {
             // Emit the resolved coordination paths as eval-able shell assignments —
             // `eval "$(concord paths)"` gives a script/hook the right env for THIS
@@ -141,6 +170,9 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
             let why = opt(rest, 2).unwrap_or("");
+            // S2: if this is a symbol-lease (`<file>:<symbol>`), validate the symbol
+            // exists (advisory note only — it may be new/about-to-be-created).
+            validate_symbol_area(store.paths(), area);
             // M3L.2 Strong tier: route through the daemon (airtight check-and-apply)
             // when it is up; the Floor (direct, RejectOverlap default) otherwise.
             if let Some(resp) = mediate(
@@ -486,7 +518,8 @@ Concord — multi-session coordination (Rust port of bin/coord.sh).
   concord register <id> <focus>                 # once, at session start
   concord heartbeat <id>                         # periodically (keeps you \"alive\")
   concord status                                 # who is active + what is leased
-  concord claim <id> <area> [why]                # BEFORE editing a shared area
+  concord claim <id> <area> [why]                # BEFORE editing a shared area (area may be <file>:<symbol>)
+  concord symbols <file>                          # list a Rust file's symbols (claimable symbol-leases)
   concord release <id> <area> [--fence N]        # when done (refuses foreign/stale)
   concord verify <id> <area>                     # do I still hold it? (fencing self-check)
   concord merge-lock <id> [why]                  # BEFORE merging (singleton)
@@ -509,6 +542,24 @@ fn require<'a>(rest: &'a [String], idx: usize, label: &'static str) -> Result<&'
 /// The positional arg at `idx`, or `None`.
 fn opt(rest: &[String], idx: usize) -> Option<&str> {
     rest.get(idx).map(String::as_str)
+}
+
+/// S2: for a symbol-lease area (`<file>:<symbol>`), emit an advisory note to stderr if
+/// the symbol cannot be found in the (Rust) file — it may be new or about to be created,
+/// so this never blocks the claim. Rust only in S2.1; TS/Python follow in S2.2.
+fn validate_symbol_area(paths: &Paths, area: &str) {
+    let (file, sym) = concord_core::slug::split_symbol(area);
+    let Some(symbol) = sym else { return };
+    if !file.ends_with(".rs") {
+        return;
+    }
+    if let Ok(src) = std::fs::read_to_string(paths.project.join(file)) {
+        if concord_ast::resolve_rust_symbol(&src, symbol).is_none() {
+            eprintln!(
+                "note: symbol '{symbol}' not found in {file} (claiming anyway — it may be new or about to be created)"
+            );
+        }
+    }
 }
 
 /// Try to route a consequential request through the daemon (Strong tier). Returns

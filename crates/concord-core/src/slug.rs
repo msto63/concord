@@ -43,6 +43,46 @@ pub fn overlaps(a: &str, b: &str) -> bool {
     sa[..n] == sb[..n]
 }
 
+/// Symbol-aware overlap (WP12 S2): an area may be a plain path OR `<path>:<symbol>`
+/// (a finer, AST-level lease *under* the path). The additive composition the path-lease
+/// alone cannot express — "two agents, same file, disjoint functions = parallel":
+///
+///  - paths that don't overlap ⇒ no overlap (different files/subtrees);
+///  - a **path-lease** subsumes ANY symbol-lease in/under it, and a held symbol-lease
+///    blocks a new path-lease on its file (bidirectional);
+///  - a proper-prefix path (`src` vs `src/f.rs:foo`) subsumes;
+///  - two symbol-leases on the SAME file conflict ONLY if it is the SAME symbol —
+///    disjoint symbols in one file are compatible.
+///
+/// (Byte-range overlap of *nested* symbols — an outer fn containing an inner one — is
+/// resolved at claim time by `concord-ast`, which knows the symbols' ranges; the pure
+/// string rule here handles the path/symbol composition.)
+pub fn area_overlaps(a: &str, b: &str) -> bool {
+    let (pa, sa) = split_symbol(a);
+    let (pb, sb) = split_symbol(b);
+    if !overlaps(pa, pb) {
+        return false;
+    }
+    match (pa == pb, sa, sb) {
+        // same file, both symbol-leases ⇒ conflict only on the same symbol
+        (true, Some(x), Some(y)) => x == y,
+        // a path-lease (no symbol) or a proper-prefix path subsumes
+        _ => true,
+    }
+}
+
+/// Split an area into `(path, Some(symbol))` for a `<path>:<symbol>` area, else
+/// `(area, None)`. A symbol suffix is the text after the LAST `:` when it is a bare
+/// identifier (contains no `/`); otherwise the whole string is the path.
+pub fn split_symbol(area: &str) -> (&str, Option<&str>) {
+    match area.rfind(':') {
+        Some(i) if i > 0 && !area[i + 1..].is_empty() && !area[i + 1..].contains('/') => {
+            (&area[..i], Some(&area[i + 1..]))
+        }
+        _ => (area, None),
+    }
+}
+
 /// Split an area into non-empty `/`-separated segments, ignoring leading/trailing
 /// and duplicate slashes so `a//b/` and `a/b` compare equal.
 fn segments(area: &str) -> Vec<&str> {
@@ -79,5 +119,36 @@ mod tests {
     #[test]
     fn overlap_ignores_redundant_slashes() {
         assert!(overlaps("a//b/", "a/b"));
+    }
+
+    #[test]
+    fn area_overlap_path_subsumes_symbol_bidirectional() {
+        // a file path-lease and a symbol-lease in that file conflict (both directions).
+        assert!(area_overlaps("kernel/src/main.rs", "kernel/src/main.rs:foo"));
+        assert!(area_overlaps("kernel/src/main.rs:foo", "kernel/src/main.rs"));
+        // a proper-prefix path subsumes a symbol under it.
+        assert!(area_overlaps("kernel/src", "kernel/src/main.rs:foo"));
+    }
+
+    #[test]
+    fn area_overlap_disjoint_symbols_same_file_are_compatible() {
+        // the killer capability: same file, different symbols ⇒ NO conflict.
+        assert!(!area_overlaps("kernel/src/main.rs:foo", "kernel/src/main.rs:bar"));
+        // same symbol ⇒ conflict.
+        assert!(area_overlaps("kernel/src/main.rs:foo", "kernel/src/main.rs:foo"));
+    }
+
+    #[test]
+    fn area_overlap_different_files_never_conflict() {
+        assert!(!area_overlaps("a/b.rs:foo", "a/c.rs:foo"));
+        assert!(!area_overlaps("a/b.rs", "a/c.rs:foo"));
+    }
+
+    #[test]
+    fn split_symbol_parses_path_and_symbol() {
+        assert_eq!(split_symbol("a/b.rs:foo"), ("a/b.rs", Some("foo")));
+        assert_eq!(split_symbol("a/b.rs"), ("a/b.rs", None));
+        // a trailing colon or empty symbol is not a symbol-area.
+        assert_eq!(split_symbol("a/b.rs:"), ("a/b.rs:", None));
     }
 }
