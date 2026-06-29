@@ -12,6 +12,7 @@
 //!    (see [`store::OverlapPolicy`]).
 
 pub mod clock;
+pub mod directive;
 pub mod error;
 pub mod model;
 pub mod paths;
