@@ -1,0 +1,10 @@
+[package]
+name = "concord-core"
+description = "Typed coordination state model + atomic on-disk transitions for Concord."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

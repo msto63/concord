@@ -1,0 +1,24 @@
+# Concord — Rust port (WP12). Workspace root.
+#
+# Two crates:
+#   concord-core  — the typed coordination state model + atomic on-disk transitions
+#   concord       — the CLI binary (drop-in for bin/coord.sh, same on-disk format)
+#
+# M1 is deliberately dependency-free (std only): byte-exact parity with the shell
+# version is easier to guarantee by hand-rolling the on-disk format than by routing
+# it through serde/clap, which format and escape differently. Later milestones
+# (M2 daemon = notify, M3 MCP = rmcp) add deps in their own crates.
+[workspace]
+resolver = "2"
+members = ["crates/concord-core", "crates/concord"]
+
+[workspace.package]
+version = "0.2.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/msto63/concord"
+rust-version = "1.88"
+
+[profile.release]
+strip = true
+lto = "thin"
