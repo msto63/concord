@@ -57,10 +57,13 @@ batching.
 ### F1 — Harness-native enforcement wiring *(research A1–A6; ADOPT ranks 1 + 6)*
 
 - **Scope:** wire Concord's *existing* lease-store + MCP server into the Claude Code hook surface:
-  - **A1 `PreToolUse`+`mcp_tool`-deny** on `Edit|Write|MultiEdit` → call Concord's MCP tool;
-    `permissionDecision:"deny"` blocks any edit to a *non-leased* file/symbol **at the keystroke**,
-    before the tool runs. (Must live on `PreToolUse`, not `SessionStart` — MCP connects *after* session
-    start.)
+  - **A1 `PreToolUse`-deny** on `Edit|Write|MultiEdit` → a `command` hook calls the typed
+    `concord check-lease <id> <file>` (the typed core owns the decision, symbol-aware via the S2 AST);
+    `permissionDecision:"deny"` blocks the edit **at the keystroke**, before the tool runs. Policy is
+    **P2 (default) — block-on-conflict:** deny only when a *different active* session holds an
+    overlapping lease (no claim-everything friction); a `<coord>/strict-leases` marker switches the core
+    to **P1 (capability-strict).** (Must live on `PreToolUse`, not `SessionStart` — the decision binary
+    is local, fail-open on any error.)
   - **A2 `SessionEnd` → auto-release** leases/merge-lock + deregister on clean exit (idempotent;
     complements TTL-reclaim by shrinking the window a finished session holds leases).
   - **A3 `Stop`-hook (block-to-continue)** → on turn-end, if the session holds a lease with open work or
@@ -68,9 +71,16 @@ batching.
     "going dark" (needs a clean termination predicate to avoid endless turns).
   - **A4 `PreCompact` + `SessionStart(source=compact)`** → dump lease/merge-lock/directive state before
     compaction, re-inject as `additionalContext` after reset. Protects protocol memory across compaction.
-  - **A5 `FileChanged`+`watchPaths`** → replace the brittle hand-rolled `stat -f %m … sleep 30` monitor
-    (named in CLAUDE.md as the #1 cause of dark sessions) with a harness-native wake on
-    `SESSION-SYNC`/registry.
+  - **A5 `FileChanged` — harness-native context refresh + a wake-verification task** *(scope corrected
+    after schema verification).* The schema check found `FileChanged` is **observational-only** (no
+    decision control) and that **`watchPaths` is emitted by `SessionStart`** (a dynamic array), not by
+    `FileChanged` (whose `matcher` takes literal filenames). It is therefore unproven that `FileChanged`
+    *wakes a dormant session*; that wake is exactly the brittle `stat`-loop monitor's value. So A5 is
+    **re-scoped**: the harness-native refresh (a SessionStart-emitted `watchPaths` for the absolute
+    `SESSION-SYNC` path + a FileChanged refresh of the per-session inbox) is built, **but the
+    `stat`-loop monitor / self-tick stays the wake** until a verification task empirically proves
+    `FileChanged` re-invokes a dormant session. Only then is the monitor retired. (Verification task
+    tracked separately; not a blocker for F1.)
   - **A6 `PostToolUse`(Edit|Write) → out-of-scope-write detection** *(final sub-slice)* → post-hoc detect
     a write *outside* the session's leases → log/flag as a policy violation. An audit tooth **behind** the
     A1 deny (defense-in-depth: catches a violation even if the deny path is bypassed).

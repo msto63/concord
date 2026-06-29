@@ -110,6 +110,17 @@ pub struct StatusReport {
     pub sessions_dir_empty: bool,
 }
 
+/// The decision from [`Store::check_lease`] — the `PreToolUse` deny verdict (F1/A1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseCheck {
+    /// The edit is permitted.
+    Allow,
+    /// The edit is refused: `holder` actively holds a lease on the overlapping `area`
+    /// (P2), or — under strict P1 with no conflicting holder — `holder` is empty meaning
+    /// "you hold no covering lease".
+    Deny { area: String, holder: String },
+}
+
 /// What a clean session-end teardown did (F1/A2). All steps are idempotent, so a
 /// repeated call returns empty/false fields rather than erroring.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -272,6 +283,83 @@ impl Store {
         fs::remove_dir_all(&dir).map_err(|e| ConcordError::io(&dir, e))?;
         self.append_log(id, &format!("release: {area}"))?;
         Ok(ReleaseOutcome::Released)
+    }
+
+    /// Decide whether `id` may edit `area`, for the `PreToolUse` deny hook (F1/A1) and
+    /// the `PostToolUse` audit (F1/A6). Two policies:
+    ///
+    /// - **P2 (default, `strict=false`) — block-on-conflict:** deny only if a *different,
+    ///   currently-active* session holds a lease overlapping `area`. Un-leased edits are
+    ///   allowed (no claim-everything friction); only a real collision is blocked. This is
+    ///   the enforced version of today's `pre-tool.sh` default-allow guard.
+    /// - **P1 (`strict=true`) — capability-strict:** deny unless `id` itself holds a lease
+    ///   covering `area`. Opt-in for high-assurance work.
+    ///
+    /// Symbol-aware throughout (a path-lease subsumes its symbols; disjoint symbols are
+    /// compatible), via [`slug::area_overlaps`]. Fail-open is the caller's job: the hook
+    /// treats any error/missing binary as Allow.
+    pub fn check_lease(&self, id: &str, area: &str, strict: bool) -> Result<LeaseCheck> {
+        // A live, non-self lease overlapping `area` is the conflict in both policies.
+        // NOTE: unlike `find_live_overlap` (claim-path, which excludes the exact-same area
+        // because the mkdir collision handles it), the edit-guard MUST catch the exact-same
+        // file/symbol too — that is the most common A1 collision.
+        let conflict = self.find_blocking_lease(id, area)?;
+        if strict {
+            // P1: allow only if `id` holds an overlapping (covering) lease of its own.
+            if self.holds_overlapping(id, area)? {
+                Ok(LeaseCheck::Allow)
+            } else {
+                let (holder, blocking_area) = match conflict {
+                    Some((a, h)) => (h, a),
+                    None => (String::new(), area.to_string()),
+                };
+                Ok(LeaseCheck::Deny { area: blocking_area, holder })
+            }
+        } else {
+            // P2: allow unless someone else actively holds an overlapping lease.
+            match conflict {
+                Some((a, holder)) => Ok(LeaseCheck::Deny { area: a, holder }),
+                None => Ok(LeaseCheck::Allow),
+            }
+        }
+    }
+
+    /// First live, non-self lease whose area overlaps `area` — INCLUDING an exact match
+    /// (the edit-guard conflict scan for [`Store::check_lease`]). Returns `(area, holder)`.
+    fn find_blocking_lease(&self, id: &str, area: &str) -> Result<Option<(String, String)>> {
+        for held_slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&held_slug);
+            if !dir.is_dir() {
+                continue;
+            }
+            let holder = read_trimmed(&dir.join("holder")).unwrap_or_else(|| "?".into());
+            if holder == id || self.holder_stale(&holder)? {
+                continue;
+            }
+            let held_area = read_trimmed(&dir.join("area")).unwrap_or_else(|| held_slug.clone());
+            if slug::area_overlaps(area, &held_area) {
+                return Ok(Some((held_area, holder)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Does `id` hold a live lease whose area overlaps `area`? (P1 allow-condition.)
+    fn holds_overlapping(&self, id: &str, area: &str) -> Result<bool> {
+        for held_slug in sorted_entries(&self.paths.leases)? {
+            let dir = self.paths.lease_dir(&held_slug);
+            if !dir.is_dir() {
+                continue;
+            }
+            if read_trimmed(&dir.join("holder")).as_deref() != Some(id) {
+                continue;
+            }
+            let held_area = read_trimmed(&dir.join("area")).unwrap_or_else(|| held_slug.clone());
+            if slug::area_overlaps(area, &held_area) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Fence-aware ownership check: does `id` still legitimately hold `area`? The

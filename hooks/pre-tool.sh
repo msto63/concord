@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# Concord PreToolUse guard — mechanically enforces leases + the merge singleton.
-# DEFAULT-ALLOW: only blocks (exit 2) when a file is in a shared region AND a
-# *different, currently-active* session holds the matching lease — or a Bash
-# merge while another active session holds the merge-lock. Any uncertainty → allow.
+# Concord PreToolUse guard (F1/A1) — HARD lease enforcement at the keystroke.
+#
+# On Edit|Write|MultiEdit|NotebookEdit, ask the typed core `concord check-lease <id> <file>`
+# and, if it says DENY, return a `permissionDecision:"deny"` that blocks the tool BEFORE it
+# runs. Policy is the typed core's (P2 block-on-conflict by default: deny only when a
+# *different active* session holds an overlapping lease; symbol-aware via the S2 AST). A
+# `<coord>/strict-leases` marker switches the core to P1 (capability-strict). On Bash, keep
+# the merge-singleton guard (no parallel merge to main while another holds the merge-lock).
+#
+# DEFAULT-ALLOW / FAIL-OPEN: any uncertainty (no id, no binary, parse failure, allow verdict)
+# leaves the tool to run. Only an explicit DENY blocks.
 . "$(dirname "$0")/lib.sh" 2>/dev/null || exit 0
 id=$(concord_id); [ -z "$id" ] && exit 0
+[ -n "$COORD_SH" ] || exit 0
 input=$(cat 2>/dev/null)
 
 parsed=$(printf '%s' "$input" | python3 -c '
@@ -19,7 +27,14 @@ tool=$(printf '%s' "$parsed" | sed -n 1p)
 field=$(printf '%s' "$parsed" | sed -n '2,$p')
 [ -z "$tool" ] && exit 0
 
-holder_active() {  # <holder> -> true if heartbeat within 30 min
+# Emit a PreToolUse deny verdict (JSON on stdout, exit 0) and stop.
+deny() {  # <reason>
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":%s}}\n' \
+    "$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  exit 0
+}
+
+holder_active() {  # <holder> -> true if heartbeat within TTL (30 min)
   local hb now
   hb=$(sed -n 's/^heartbeat=//p' "$COORD/sessions/$1" 2>/dev/null)
   now=$(date +%s 2>/dev/null)
@@ -29,28 +44,21 @@ holder_active() {  # <holder> -> true if heartbeat within 30 min
 case "$tool" in
   Edit|Write|MultiEdit|NotebookEdit)
     f="$field"; [ -z "$f" ] && exit 0
-    top=$(git rev-parse --show-toplevel 2>/dev/null)
-    rel="$f"; case "$f" in "$top"/*) rel="${f#"$top"/}";; esac
-    [ -f "$HOOKS/shared-regions" ] || exit 0
-    while IFS= read -r pat; do
-      case "$pat" in ''|\#*) continue;; esac
-      case "$rel" in
-        "$pat"|"$pat"/*)
-          rslug=$(concord_slug "$pat")
-          for d in "$COORD"/leases/*; do
-            [ -e "$d" ] || break
-            b=$(basename "$d")
-            case "$b" in
-              "$rslug"*)
-                h=$(cat "$d/holder" 2>/dev/null)
-                if [ -n "$h" ] && [ "$h" != "$id" ] && holder_active "$h"; then
-                  echo "Concord: '$rel' liegt in einer geteilten Region, die Session '$h' geleast hat (Lease '$b'). Erst koordinieren (status / SESSION-SYNC, ggf. claim nach release) statt parallel editieren. Override falls nötig: Lease freigeben/neu zuweisen oder die Region aus $HOOKS/shared-regions nehmen." >&2
-                  exit 2
-                fi ;;
-            esac
-          done ;;
-      esac
-    done < "$HOOKS/shared-regions"
+    # Relativize to the repo root. Normalize BOTH to physical paths (pwd -P) so a
+    # symlinked prefix (e.g. macOS /var → /private/var) doesn't defeat the strip; the
+    # file may not exist yet (a Write), so resolve its directory, not the file.
+    top=$(git rev-parse --show-toplevel 2>/dev/null); top=$(cd "$top" 2>/dev/null && pwd -P)
+    rel="$f"
+    fdir=$(cd "$(dirname "$f")" 2>/dev/null && pwd -P)
+    [ -n "$fdir" ] && f="$fdir/$(basename "$f")"
+    case "$f" in "$top"/*) rel="${f#"$top"/}";; esac
+    strict=""; [ -f "$COORD/strict-leases" ] && strict="--strict"
+    # Typed-core decision; fail-open on any error (out=empty / nonzero-from-missing-binary).
+    out=$("$COORD_SH" check-lease "$id" "$rel" $strict 2>/dev/null) || true
+    case "$out" in
+      DENY*)
+        deny "Concord: '$rel' is leased — $out. Coordinate first (status / SESSION-SYNC; claim after the holder releases) instead of editing in parallel. Override: release/reassign the lease, or remove $COORD/strict-leases." ;;
+    esac
     ;;
   Bash)
     c="$field"
@@ -59,8 +67,7 @@ case "$tool" in
         if [ -d "$COORD/merge.lock" ]; then
           h=$(cat "$COORD/merge.lock/holder" 2>/dev/null)
           if [ -n "$h" ] && [ "$h" != "$id" ] && holder_active "$h"; then
-            echo "Concord: Die Merge-Sperre wird gerade von Session '$h' gehalten. Nicht parallel nach main mergen — warte auf merge-unlock oder koordiniere über K." >&2
-            exit 2
+            deny "Concord: the merge-lock is held by session '$h'. Do not merge to main in parallel — wait for merge-unlock or coordinate via the coordinator."
           fi
         fi ;;
     esac

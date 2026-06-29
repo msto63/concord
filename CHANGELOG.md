@@ -11,6 +11,40 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-29
+
+Wave 2 — F1: harness-native enforcement. Concord's leases stop being advisory at the
+edit boundary and start being **hard at the keystroke**, and the "going dark" failure
+mode gets a harness-native cure. (ADR-0003, accepted.)
+
+### Added
+- **A1 — `PreToolUse` lease deny.** A new typed `concord check-lease <id> <file>` verb
+  (P2 *block-on-conflict* by default — deny only when a *different active* session holds
+  an overlapping lease; symbol-aware via the S2 AST; `<coord>/strict-leases` switches to
+  P1 *capability-strict*). The `pre-tool.sh` hook calls it and returns
+  `permissionDecision:"deny"`, blocking a conflicting edit **before** the tool runs.
+- **A2 — `SessionEnd` clean-exit teardown.** `concord session-end <id>`
+  (`Store::session_end`/`release_all`/`deregister`, idempotent) releases all of a session's
+  leases, drops the merge-lock if held, and deregisters on clean exit — complementing the
+  TTL-stale-reclaim.
+- **A3 — `Stop` anti-going-dark.** `stop.sh` refuses a turn-end while an un-ACK'd
+  `### … → <id>` coordinator directive is pending (narrow predicate; `stop_hook_active`
+  loop-guard), injecting it so the session handles it instead of going dormant.
+- **A4 — `PreCompact` protocol-memory.** `pre-compact.sh` snapshots leases/merge-lock to
+  `<coord>/state/<id>.precompact` and emits `additionalContext`; `session-start.sh`
+  re-injects it on `source=compact` (belt-and-suspenders).
+- **A6 — `PostToolUse` out-of-scope-write audit.** Audit-only accountability backstop
+  behind A1: an edit that slipped past the deny (another active holder) is logged as a
+  provenance violation in the ledger.
+- New CI smoke `tests/hooks-enforce-smoke.sh` asserts the A1 deny / A6 audit / A3 anti-dark /
+  A4 snapshot paths and that all hooks fail-open. `install-hooks` now ships 12 files.
+
+### Notes
+- **A5 (`FileChanged` monitor replacement) re-scoped.** Schema verification found
+  `FileChanged` is observational-only and `watchPaths` lives on `SessionStart`; whether it
+  *wakes a dormant session* is unproven. So the `stat`-loop monitor / self-tick **stays the
+  wake** pending a verification task; only then is it retired. (ADR-0003 §F1/A5.)
+
 ## [0.5.0] - 2026-06-29
 
 Cross-platform + distribution (S3/M4) — Concord is now shippable.
