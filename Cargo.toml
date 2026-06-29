@@ -13,7 +13,7 @@ resolver = "2"
 members = ["crates/concord-core", "crates/concord", "crates/concordd", "crates/concord-mcp", "crates/concord-ast"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/msto63/concord"
@@ -22,3 +22,23 @@ rust-version = "1.88"
 [profile.release]
 strip = true
 lto = "thin"
+
+# ── Distribution (M4.2) ──
+# `dist` (formerly cargo-dist) reads this. Run `dist init`/`dist generate` to (re)produce
+# .github/workflows/release.yml from here. The committed release.yml is a self-contained
+# equivalent that ships today without `dist` installed; regenerating with `dist` is the
+# forward path once it's on the operator's machine (ADR-0001 open-question 2).
+[workspace.metadata.dist]
+cargo-dist-version = "0.32.0"
+# Ship all three runnable binaries: the CLI, the push daemon, and the MCP server.
+ci = ["github"]
+installers = ["shell", "powershell"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+# Version discipline (scripts/check-version.sh) gates the release in CI before any build.
+allow-dirty = ["ci"]
+install-path = "CARGO_HOME"

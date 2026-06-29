@@ -20,7 +20,10 @@
 //! renames surface on the target path, one logical write debounces to one batch).
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write as _};
+use std::io::Write as _;
+#[cfg(unix)]
+use std::io::{BufRead as _, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, RecvTimeoutError};
@@ -28,12 +31,16 @@ use std::time::Duration;
 
 use concord_core::clock;
 use concord_core::directive::{demux, route};
+#[cfg(unix)]
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
 use concord_core::message::Message;
+#[cfg(unix)]
 use concord_core::store::{
     ClaimOutcome, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
 };
-use concord_core::{Paths, Store};
+use concord_core::Paths;
+#[cfg(unix)]
+use concord_core::Store;
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 
@@ -59,7 +66,9 @@ fn main() {
     // M2.3 Strong: the mediation socket — the single serialization point for
     // consequential writes (merge-lock/unlock). Runs in its own thread, serving
     // requests SERIALLY so check-and-apply is atomic (closes the Floor's TOCTOU
-    // window). The watch loop owns the main thread.
+    // window). The watch loop owns the main thread. Unix only — off Unix the daemon is
+    // watch/inbox-only (no mediation; the CLI uses the enforced Floor).
+    #[cfg(unix)]
     {
         let p = paths.clone();
         std::thread::spawn(move || run_socket_server(&p));
@@ -70,6 +79,7 @@ fn main() {
 
 // ─────────────────────────── mediation socket (M2.3) ───────────────────────────
 
+#[cfg(unix)]
 fn socket_path(paths: &Paths) -> PathBuf {
     paths.coord.join(SOCKET_NAME)
 }
@@ -77,6 +87,7 @@ fn socket_path(paths: &Paths) -> PathBuf {
 /// Serve mediated requests on the Unix socket, one connection at a time (serial — the
 /// single serialization point). Each request is dispatched to a fresh [`Store`] (so
 /// the timestamp is current) and answered with one response line.
+#[cfg(unix)]
 fn run_socket_server(paths: &Paths) {
     let path = socket_path(paths);
     let _ = fs::create_dir_all(&paths.coord);
@@ -100,6 +111,7 @@ fn run_socket_server(paths: &Paths) {
 }
 
 /// Handle one connection: read a request line, apply it, write a response line.
+#[cfg(unix)]
 fn handle_conn(paths: &Paths, stream: UnixStream) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -118,6 +130,7 @@ fn handle_conn(paths: &Paths, stream: UnixStream) {
 }
 
 /// Apply a mediated request against the store — the atomic check-and-apply.
+#[cfg(unix)]
 fn apply(paths: &Paths, req: Request) -> Response {
     match req {
         Request::Ping => Response::Pong,
@@ -185,6 +198,7 @@ fn apply(paths: &Paths, req: Request) -> Response {
 }
 
 /// The fence currently stamped on the merge lock (0 if unreadable).
+#[cfg(unix)]
 fn merge_fence(store: &Store) -> u64 {
     store
         .read_merge_lock()

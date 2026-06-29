@@ -219,8 +219,11 @@ default; M2+ builds additively over the unchanged FS state.
 **Open questions (resolved in review).**
 - (1) ADR language — **RESOLVED: English**, matching the English public-doc layer
   (README/MANUAL/ROADMAP/BACKLOG); a flip to German is cheap if the operator prefers.
-- (2) `cargo-dist` vs a plain `cargo build` CI matrix — **RESOLVED: deferred to M4**, outside
-  the M1+M2+M3 cut; re-evaluate there with a fresh check of cargo-dist's maintenance status.
+- (2) `cargo-dist` vs a plain `cargo build` CI matrix — **RESOLVED (M4): adopt `cargo-dist`.**
+  The maintenance concern is cleared — it is actively maintained, now released as `dist`
+  (v0.31/0.32 in 2026). M4.1 first made the workspace Windows-portable (`cfg(unix)`-gating the
+  Unix-socket code; off-Unix falls back to the enforced Floor) and embedded the hook scripts
+  into the binary (`concord install-hooks`); M4.2 wires the `dist` release matrix + installers.
 - (3) whether the fence counter should span shell-issued actions during coexistence —
   **RESOLVED: Rust-only**. The M2 daemon becomes the sole fence issuer at the point
   enforcement begins, so coexistence shell actions need not bump the counter.

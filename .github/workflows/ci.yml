@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test + clippy + version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Version discipline
+        run: bash scripts/check-version.sh
+      - name: Shell smoke tests
+        run: |
+          for t in symbol-locks parity-harness daemon-e2e launcher-smoke install-hooks-smoke; do
+            echo "── $t ──"; bash "tests/$t.sh"
+          done
+
+  windows-check:
+    name: windows portability (cfg-gate)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The MSVC runner has a C toolchain, so tree-sitter's cc build in concord-ast works.
+      - name: Check the full workspace builds on Windows
+        run: cargo check --workspace

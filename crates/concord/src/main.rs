@@ -21,6 +21,7 @@
 
 use std::process::ExitCode;
 
+mod hooks_embed;
 mod launcher;
 
 use concord_core::ipc::{Request, Response, SOCKET_NAME};
@@ -167,7 +168,21 @@ fn run(args: &[String]) -> Result<ExitCode> {
             } else {
                 println!("  sessions: {}", ids.join(", "));
             }
+            // --with-hooks: also lay down + wire the Claude Code automation hooks (so a
+            // fresh project is one command from coordinated). --no-wire skips settings.
+            if has_flag(rest, "--with-hooks") {
+                let wire = !has_flag(rest, "--no-wire");
+                return Ok(hooks_embed::cmd_install_hooks(p, wire));
+            }
             Ok(ExitCode::SUCCESS)
+        }
+
+        "install-hooks" => {
+            // Materialize the embedded Claude Code automation hooks into <coord>/hooks/
+            // and (on Unix, unless --no-wire) wire ~/.claude/settings.json. Lets a shipped
+            // binary set up session automation with no repo checkout.
+            let wire = !has_flag(rest, "--no-wire");
+            Ok(hooks_embed::cmd_install_hooks(store.paths(), wire))
         }
 
         "claim" => {
@@ -617,6 +632,11 @@ fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
         .position(|a| a == flag)
         .and_then(|i| rest.get(i + 1))
         .map(String::as_str)
+}
+
+/// True if a bare `--flag` is present anywhere in `rest`.
+fn has_flag(rest: &[String], flag: &str) -> bool {
+    rest.iter().any(|a| a == flag)
 }
 
 /// Positional args, skipping `--flag value` pairs named in `value_flags` and any other

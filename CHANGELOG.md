@@ -11,6 +11,35 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-29
+
+Cross-platform + distribution (S3/M4) — Concord is now shippable.
+
+### Added
+- **Distribution pipeline (M4.2).** A self-contained, version-gated GitHub Actions release
+  workflow (`.github/workflows/release.yml`): on a `vX.Y.Z` tag it checks version discipline,
+  cross-builds the support matrix (aarch64/x86_64 macOS, x86_64 Linux, x86_64 Windows-MSVC),
+  and attaches archives + SHA-256 checksums of all three binaries (`concord`, `concordd`,
+  `concord-mcp`) to a GitHub Release. A `curl … | sh` installer (`scripts/install.sh`) detects
+  the platform, verifies the checksum, and installs to `~/.local/bin`. `dist` config lives in
+  `[workspace.metadata.dist]` for richer installers once `dist` is adopted. CI workflow
+  (`ci.yml`) runs build/clippy/test/version + a Windows `cargo check`.
+- **Windows portability (M4.1).** The Unix-domain-socket code in `concord-core::ipc`,
+  `concordd`, and `concord-mcp` is now `cfg(unix)`-gated; off Unix, `ipc::mediate` is a
+  no-op so every consequential op falls back to the enforced **Floor** (FS-authoritative
+  leases, the merge singleton, fencing, symbol-locks — all platform-portable). The typed
+  core, CLI, daemon, and MCP server all `cargo check` cleanly for `x86_64-pc-windows-gnu`.
+- **Embedded hooks + `concord install-hooks` (M4.1).** The Claude Code automation scripts
+  ship *inside* the binary (`include_str!`), so a `cargo install`'d `concord` needs no repo
+  checkout to set up. `concord install-hooks [--no-wire]` materializes them into
+  `<coord>/hooks/` (with exec bits) and, on Unix, wires `~/.claude/settings.json` via the
+  proven `install.sh`. `concord init --with-hooks` does both in one step. Off Unix the files
+  are written but `settings.json` is left untouched (session-automation is Unix-only).
+
+### Notes
+- **`cargo-dist` maintenance concern (ADR-0001) RESOLVED.** Verified actively maintained —
+  released as `dist` (v0.31/0.32 in 2026). The M4.2 distribution layer adopts it.
+
 ## [0.4.0] - 2026-06-29
 
 Symbol-level (AST) leases — the differentiator. Concord can now lease a single symbol
