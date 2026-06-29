@@ -49,15 +49,16 @@ Every session runs in **its own git worktree**, named by the convention `<repo>-
 
 ```
 /Projects/your-repo        ← canonical main checkout + launch root (no session lives here)
-/Projects/your-repo-a      ← session A
-/Projects/your-repo-b      ← session B
-/Projects/your-repo-k      ← session K (coordinator)
+/Projects/your-repo-a      ← session a
+/Projects/your-repo-b      ← session b
+/Projects/your-repo-hub    ← the coordinator (hub)
 ```
 
-The session id is a short, stable letter (A, B, C, …, K). Worktrees keep edits isolated; a session
-can read and modify its own terrain without touching another's checkout.
+The session id is a short, stable name (`a`, `b`, `c`, …); one of them is the coordinator (by
+default `hub`). Worktrees keep edits isolated; a session can read and modify its own terrain
+without touching another's checkout.
 
-### The coordinator ("K")
+### The coordinator (`hub`)
 
 One session is the **coordinator/steward**. It owns no code terrain. It:
 
@@ -68,27 +69,30 @@ One session is the **coordinator/steward**. It owns no code terrain. It:
 
 ### The command chain
 
-Tasks, priorities, and ordering flow **human → K → sessions**. This is deliberate:
+Tasks, priorities, and ordering flow **human → hub → sessions**. This is deliberate:
 
 - **No peer-to-peer task assignment.** No worker tells another what to do or reorders its
-  priorities. If you need something from another session, it goes *through K*.
+  priorities. If you need something from another session, it goes *through hub*.
 - **Allowed peer collaboration:** negotiating interfaces/contracts (a shared API, a wire format),
   sharing information, asking questions, handing off findings. That is collaboration, not command.
-- **Ownership disputes → K** decides.
+- **Ownership disputes → hub** decides.
 
 ## 4. Identity
 
-A session's identity comes from the `CONCORD_ID` environment variable, set when the session is
-launched (`concord start <id>` exports it). This is robust: deriving identity from the working
-directory fails when every session is launched from the same repo root. The hooks and CLIs all
-read `CONCORD_ID` to know which session they are acting for.
+A session's **id** (e.g. `a`, `hub`) comes from the **worktree** it runs in. `concord start <id>`
+runs the session in the `<repo>-<id>` worktree and writes an id-bind marker so the hooks know which
+session they are; with no marker the hooks fall back to the worktree-name convention (`<repo>-<id>`
+→ the `<id>` suffix). No environment variable is needed.
+
+> *Deprecated:* a legacy `CONCORD_ID` environment variable is still honored with a deprecation
+> warning for one release, then removed.
 
 ## 5. The lifecycle
 
 ### Register (once, at start)
 
 ```bash
-coord.sh register <id> "<focus>"
+concord register <id> "<focus>"
 ```
 
 Writes the session's focus and timestamps into the registry. With the hooks installed, this happens
@@ -97,7 +101,7 @@ automatically on session start.
 ### Heartbeat (while you hold a lease)
 
 ```bash
-coord.sh heartbeat <id>
+concord heartbeat <id>
 ```
 
 Only `register` and `heartbeat` refresh your timestamp (`claim`/`log`/`status` do **not**). Without
@@ -111,22 +115,22 @@ you need no heartbeat.
 ### Leases (before editing a shared region)
 
 ```bash
-coord.sh claim <id> <path-or-area> "why"     # acquire
-coord.sh release <id> <path-or-area>          # release when done
+concord claim <id> <path-or-area> "why"     # acquire
+concord release <id> <path-or-area>          # release when done
 ```
 
 Shared regions worth a lease: a build-critical file many touch, a shared library, a specific daemon,
 a doc several might edit. On `CONFLICT`, do **not** edit anyway — coordinate first (check `status`,
-post to the prose channel, ask K). A lease is a cooperative claim, not a hard mutex, but with the
+post to the prose channel, ask hub). A lease is a cooperative claim, not a hard mutex, but with the
 mandate in `CLAUDE.md` it reliably stops two sessions colliding.
 
 ### Merge lock (before merging to main)
 
 ```bash
-coord.sh merge-lock <id> "merge #NN"  &&  <do the merge>  &&  coord.sh merge-unlock <id>
+concord merge-lock <id> "merge #NN"  &&  <do the merge>  &&  concord merge-unlock <id>
 ```
 
-Only one session merges at a time. Merges run through K.
+Only one session merges at a time. Merges run through hub.
 
 ### Stale reclaim
 
@@ -137,8 +141,8 @@ is automatic and is what keeps a crashed session from wedging the team.
 
 To keep startup orderly, a freshly launched session does **not** grab work immediately. Instead:
 
-1. The session registers, sets up its self-tick, and posts `### <id> → K (READY: <terrain>, waiting for GO)`.
-2. It **holds** — heartbeating only — until the coordinator posts `### K → <id> (GO: <task>)`.
+1. The session registers, sets up its self-tick, and posts `### <id> → hub (READY: <terrain>, waiting for GO)`.
+2. It **holds** — heartbeating only — until the coordinator posts `### hub → <id> (GO: <task>)`.
 3. On `GO`, it takes the assigned work.
 
 This gives the coordinator deliberate control over *when* each session starts and *what* it picks,
@@ -148,18 +152,18 @@ instead of every session racing to grab work at launch.
 
 - **The prose channel** is `<repo>-SESSION-SYNC.md` (one shared file, absolute path). Each post is
   one `### <id> → <target> (<topic>)` block, kept short and concrete.
-- **`coord.sh sync`** posts to the channel from a sandboxed session that cannot append to a file
+- **`concord sync`** posts to the channel from a sandboxed session that cannot append to a file
   outside its working directory (the CLI is allow-listed):
   ```bash
-  coord.sh sync <id> <target> "<topic>" "<body>"
+  concord sync <id> <target> "<topic>" "<body>"
   ```
 - **No blocking decision forms in worker sessions.** A worker must never use an interactive
   decision dialog — nobody is watching that window, so it blocks invisibly. Instead, post the
-  decision *with options + your recommendation* as `### <id> → K (DECISION: <topic>)` and continue
+  decision *with options + your recommendation* as `### <id> → hub (DECISION: <topic>)` and continue
   other unblocked work. Only the coordinator uses interactive forms.
 - **No silent idling.** A worker either holds a lease and works, or has an open status/decision post
-  to K. Surface "done / blocked / idle" visibly: `### <id> → K (DONE | BLOCKED | IDLE: <what/why>)`.
-- **Acknowledge assignments (ACK).** Reply to a coordinator directive with `### <id> → K (ACK: …)`.
+  to hub. Surface "done / blocked / idle" visibly: `### <id> → hub (DONE | BLOCKED | IDLE: <what/why>)`.
+- **Acknowledge assignments (ACK).** Reply to a coordinator directive with `### <id> → hub (ACK: …)`.
 
 ## 8. Strategic guard-rails
 
@@ -170,7 +174,7 @@ Two principles travel with the coordinator role:
   project exists to enforce. When in doubt, take the hard, faithful path.
 - **Stop-gaps are allowed — but only visibly and with a clean-up path.** Mark a quick hack in code
   (`// HACK(<id> <date>): <why provisional> — CLEANUP: <condition>`) and record it findably (a
-  backlog entry or `coord.sh log`), so it never quietly becomes permanent.
+  backlog entry or `concord log`), so it never quietly becomes permanent.
 
 ## 9. Staying self-driven (avoiding dormancy)
 
@@ -186,29 +190,35 @@ directives from the channel, and continue assigned work *or* post status.
 
 ## 10. CLI reference
 
-### `concord` — mission control (humans)
+Everything is the one `concord` binary (plus the `concordd` daemon and `concord-mcp` server,
+which run in the background). There is no separate shell tool.
+
+**Launching + overview (you, the human):**
 
 | Command | Effect |
 |---|---|
-| `concord start <id>` | Launch session `<id>` **in the current terminal**: cd to its worktree, export `CONCORD_ID`, exec the AI CLI with full permissions and a kickoff prompt. The session reports READY and waits for GO. |
+| `concord init [--ids a,b,…] [--with-hooks]` | Scaffold a project's coordination state (and, with `--with-hooks`, wire the editor hooks). |
+| `concord start <id>` | Launch session `<id>` **in the current terminal**: cd to its worktree, write an id-bind marker, exec the AI CLI with full permissions and a kickoff prompt. The session reports READY and waits for GO. |
 | `concord dash` | Live overview: active sessions (focus · lease · heartbeat age · last prose post). |
-| `concord status` | Raw registry status. |
+| `concord status` | Registry + leases + resources + escalations + telemetry health. |
 | `concord pause <id>` / `resume <id>` | Set/clear a pause flag the session's tick respects. |
 | `concord stop <id>` | Signal a session to stop. |
+| `concord install-hooks` | Install the editor hooks into Claude Code's settings (also done by `init --with-hooks`). |
 
 `concord start` runs the session in the terminal you invoke it from — no new window, terminal-agnostic.
-Open one tab per session and run `concord start <id>` in each.
 
-### `coord.sh` — coordination state (sessions)
+**Coordination verbs (the sessions):**
 
-`register` · `heartbeat` · `status` · `claim` · `release` · `merge-lock` · `merge-unlock` ·
-`log <id> <event…>` · `sync <id> <target> "<topic>" "<body>"`. See §5–§7 for usage.
+`register` · `heartbeat` · `status` · `claim` / `release` (path **or** `<file>:<symbol>`; resources
+via `--kind resource [--slots N]`) · `verify` · `check-lease` · `merge-lock` / `merge-unlock` ·
+`ack` · `escalate` / `resolve` / `escalations` · `contract` / `contract-check` / `contracts` /
+`contract-release` · `log <id> <event…>` · `sync <id> <target> "<topic>" "<body>"`. See §5–§7 for usage.
 
 ## 11. Configuration
 
-All tunables live in **one `config.toml`**. A fully-commented template ships with every
-release (and is in the repo root) as **`config.toml.example`** — every key is shown at its
-built-in default. `concord init` also drops this file into the coordination dir for you.
+All tunables live in **one `config.toml`**. A fully-commented template ships with every release
+(under `config/`) as **`config/config.toml.example`** — every key is shown at its built-in default.
+`concord init` also drops this file into the coordination dir for you.
 
 ### Where to put it
 
@@ -222,7 +232,7 @@ Effective config = **built-in defaults ← user-global ← project** (the more s
 wins, per key). To start from the template:
 
 ```bash
-cp config.toml.example <repo>-coord/config.toml   # from an unpacked release, then edit
+cp config/config.toml.example <repo>-coord/config.toml   # from an unpacked release, then edit
 ```
 
 ### Settings
@@ -271,55 +281,57 @@ Installing the hooks removes the discipline burden from the sessions:
 
 | Hook | Effect |
 |---|---|
-| **statusline** | Shows `● <id>` (window identity) using `CONCORD_ID`. |
+| **statusline** | Shows `● <id>` (window identity), resolved from the id-bind marker / worktree convention. |
 | **SessionStart** | Auto-`register` + initial heartbeat; injects the session's standing instructions. |
 | **PostToolUse / UserPromptSubmit** | Injects new `### … → <id>` directives from the channel so broadcasts are never missed. |
-| **PreToolUse** | Lease / merge guard — warns or blocks on a certain collision with another active session (default-allow otherwise). |
+| **PreToolUse** | Lease / merge guard — blocks an edit to a file another active session has leased (default-allow otherwise). |
+| **Stop / PreCompact / SessionEnd** | Keep a session from going silent with an un-ACK'd directive, preserve protocol state across compaction, and auto-release leases on a clean exit. |
 
-`hooks/install.sh` backs up and merges the hook configuration into the Claude Code settings;
-`hooks/uninstall.sh` reverts it.
+`concord install-hooks` backs up and merges the hook configuration into Claude Code's settings
+(it is also run by `concord init --with-hooks`); the scripts ship inside the binary, so no repo
+checkout is needed.
 
 ## 13. Setup
 
-### A new project
-
-1. Symlink `bin/concord` onto your `PATH`.
-2. Run `hooks/install.sh`.
-3. Create worktrees `<repo>-a … <repo>-k` (see README quick start).
-4. Add the **standing instructions block** (see §14) to the repo's `CLAUDE.md` so every session is
+1. **Install the binary** — the `curl … | sh` installer, `cargo install`, or a prebuilt release
+   (see the README "Install" section).
+2. **Initialise the project** — from the repo, `concord init --with-hooks` (scaffolds the
+   coordination state and wires the editor hooks into Claude Code's settings).
+3. **Create one worktree per session**, named `<repo>-<id>` (e.g. `<repo>-a`, `<repo>-hub`) — see
+   the README quick start.
+4. **Add the standing-instructions block** (see §14) to the repo's `CLAUDE.md`, so every session is
    wired into Concord automatically.
-5. From the repo root, `concord start <id>` per terminal tab.
+5. **Launch** — `concord start <id>` per terminal tab.
 
-### An existing project already using a copy
-
-Repoint the global hooks at this repo's `hooks/`, launch the project's sessions with that project's
-`CONCORD_DIR` / `CONCORD_SYNC` (or let `concord` derive them from the repo root), and symlink the
-project's `coord.sh` to `bin/coord.sh` so there is a single source of truth.
+To change any setting, drop a `config.toml` in `<repo>-coord/` (or the user-global location) — see
+§11. Concord resolves the coordination dir for each project by convention (`<repo>-coord` next to
+the repo); no per-project environment is needed.
 
 ## 14. Ready-made prompts
 
 ### Standing instructions (add to the coordinated repo's `CLAUDE.md`)
 
 > Multiple sessions work this repo in parallel via **Concord**. At session start: pick a stable id
-> and `coord.sh register <id> "<focus>"`. Become self-driven (a persistent channel watcher **and** a
-> ~10–15 min self-tick) so you don't go dormant. Before editing a shared region, `coord.sh claim`.
-> Before merging to `main`, take the singleton `coord.sh merge-lock`. Heartbeat in your turn rhythm
-> while you hold a lease; `release` when done. Tasks flow human → K → sessions: no peer task
-> assignment, no interactive decision forms in worker sessions (post `### <id> → K (DECISION: …)`
-> instead). Never idle silently — hold a lease and work, or post status to K.
+> and `concord register <id> "<focus>"`. Become self-driven (a persistent channel watcher **and** a
+> ~10–15 min self-tick) so you don't go dormant. Before editing a shared region, `concord claim`.
+> Before merging to `main`, take the singleton `concord merge-lock`. Heartbeat in your turn rhythm
+> while you hold a lease; `release` when done. Tasks flow human → hub → sessions: no peer task
+> assignment, no interactive decision forms in worker sessions (post `### <id> → hub (DECISION: …)`
+> instead). Never idle silently — hold a lease and work, or post status to hub.
 
 ### Self-tick (worker)
 
-> Concord worker tick: 1) `coord.sh heartbeat <id>`. 2) If you have no `### K → <id> (GO: …)` yet,
+> Concord worker tick: 1) `concord heartbeat <id>`. 2) If you have no `### hub → <id> (GO: …)` yet,
 > hold READY (heartbeat only). 3) After GO, read new `### … → <id>` directives and continue the
-> task; raise real design forks as `### <id> → K (DESIGN: …)`. 4) Lease before shared edits; merge
-> only via K. 5) Post via the channel (or `coord.sh sync` if sandbox-blocked). 6) Surface
-> done/blocked to K. Never idle silently; no interactive decision forms.
+> task; raise real design forks as `### <id> → hub (DESIGN: …)`. 4) Lease before shared edits; merge
+> only via hub. 5) Post via the channel (or `concord sync` if sandbox-blocked). 6) Surface
+> done/blocked to hub. Never idle silently; no interactive decision forms.
 
 ## 15. Lessons learned
 
-- **Identity must come from `CONCORD_ID`, not the working directory** — all sessions launch from the
-  same root, so cwd-based identity makes every session look like the same one.
+- **Identity comes from the worktree** — `concord start` writes an id-bind marker and the
+  `<repo>-<id>` worktree name carries the id, so no ambient environment variable is needed (and no
+  two sessions look alike).
 - **Run sessions in the current terminal**, not a spawned window — simpler, terminal-agnostic, and
   it puts each session in the tab you chose.
 - **The prose channel grows monotonically and every session reads it** — this is the main token

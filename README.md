@@ -3,7 +3,7 @@
 **Let several AI coding assistants work in the same codebase at once — without stepping on each other.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.11.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.2-blue.svg)](CHANGELOG.md)
 
 Concord is a small, self-contained tool that coordinates a team of AI coding sessions (for
 example several [Claude Code](https://claude.com/claude-code) windows) working on one
@@ -118,12 +118,12 @@ cargo install --git https://github.com/msto63/concord concord
 concord init --with-hooks
 
 # 2. Give each session its own copy of the repo (a git worktree), named <repo>-<id>:
-git worktree add ../your-repo-a -b a/work     # a worker
-git worktree add ../your-repo-k -b k/work     # the coordinator
+git worktree add ../your-repo-a -b a/work       # a worker
+git worktree add ../your-repo-hub -b hub/work   # the coordinator
 
 # 3. Launch a session per terminal:
 concord start a      # a worker — announces itself, waits for the coordinator's go-ahead
-concord start k      # the coordinator — assigns and sequences the work
+concord start hub    # the coordinator — assigns and sequences the work
 
 # 4. See who's working on what:
 concord dash
@@ -141,11 +141,11 @@ Concord works out of the box; every setting has a sensible default. To change on
 - `<repo>-coord/config.toml` — this project only.
 - `~/.config/concord/config.toml` — all your projects.
 
-A fully-commented `config.toml.example` ships in every release (and `concord init` writes it
-into your coordination dir). Copy it and edit:
+A fully-commented `config/config.toml.example` ships in every release (and `concord init` writes
+it into your coordination dir). Copy it and edit:
 
 ```bash
-cp config.toml.example <repo>-coord/config.toml
+cp config/config.toml.example <repo>-coord/config.toml
 ```
 
 See **[docs/MANUAL.md](docs/MANUAL.md) §11** for the full list of settings (lease timeouts,

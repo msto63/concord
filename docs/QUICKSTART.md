@@ -31,17 +31,19 @@ This creates, next to your repo, an inspectable coordination state:
 
 `init` also drops a commented `config.toml` (all defaults) into `<repo>-coord/`. Optional:
 to change a setting, edit it there — or copy the template from a release:
-`cp config.toml.example <repo>-coord/config.toml`. See [MANUAL.md](MANUAL.md) §11.
+`cp config/config.toml.example <repo>-coord/config.toml`. See [MANUAL.md](MANUAL.md) §11.
 
 ## 3. Start a session per terminal
 
-Open one terminal per session and tell Concord who it is via `CONCORD_ID`:
+Open one terminal per session and launch it with its id:
 
 ```sh
-CONCORD_ID=a   concord status      # this terminal is session "a"
+concord start a      # runs in the your-repo-a worktree, as session "a"
+concord start hub    # the coordinator
 ```
 
-(If you use the shell launcher `bin/concord start <id>`, it sets the id + env for you.)
+`concord start <id>` runs the session in its `<repo>-<id>` worktree and writes an id-bind marker,
+so the hooks know which session they are — no environment variable needed.
 
 ## Daily commands
 
