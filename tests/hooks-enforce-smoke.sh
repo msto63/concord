@@ -32,9 +32,11 @@ out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/free.rs"}}' 
 [ -z "$out" ] && ok "A1: b's edit of a free file is allowed" || no "A1 should allow free file (got: $out)"
 out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/x.rs"}}' "$PROJ" | hook a pre-tool.sh)
 [ -z "$out" ] && ok "A1: a's edit of its OWN leased file is allowed" || no "A1 should allow own lease (got: $out)"
-# fail-open: binary missing → allow.
-out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/x.rs"}}' "$PROJ" | ( cd "$PROJ" && env CONCORD_ID=b CONCORD_DIR="$COORD" CONCORD_BIN=/nonexistent bash "$HERE/hooks/pre-tool.sh" ))
-[ -z "$out" ] && ok "A1: fail-open when the binary is missing" || no "A1 should fail-open (got: $out)"
+# fail-open: NO concord available at all → allow. A minimal PATH (/usr/bin:/bin) keeps
+# git/python3/perl but excludes any globally-installed `concord` (the new PATH fallback in
+# lib.sh) so this genuinely exercises the no-binary case on any machine.
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/x.rs"}}' "$PROJ" | ( cd "$PROJ" && env -i PATH=/usr/bin:/bin CONCORD_ID=b CONCORD_DIR="$COORD" CONCORD_BIN=/nonexistent bash "$HERE/hooks/pre-tool.sh" ))
+[ -z "$out" ] && ok "A1: fail-open when no concord is available" || no "A1 should fail-open (got: $out)"
 
 # ── A6: PostToolUse out-of-scope-write audit (log, no block) ──
 count_viol() { grep -c "out-of-scope-write" "$COORD/intents.jsonl" 2>/dev/null | head -1; }

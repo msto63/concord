@@ -11,20 +11,18 @@ COORD="${CONCORD_DIR:-${AIS_COORD_DIR:-$(dirname "$_libdir")}}"
 HOOKS="$COORD/hooks"
 PROJECT="${CONCORD_PROJECT:-${AIS_PROJECT_DIR:-${COORD%-coord}}}"
 SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-${COORD%-coord}-SESSION-SYNC.md}}"
-# The coordination CLI the hooks drive. DOGFOOD (M5.2): prefer the Rust `concord`
-# binary — same verb interface, parity-proven — falling back to the shell coord.sh.
-# This is what makes Concord coordinate Concord with the Rust tool; both read/write the
-# same on-disk state, so the shell remains an instant fallback if the binary misbehaves.
-#
-# Resolution is deliberately SELF-SCOPING (minimal blast-radius): the Rust binary is
-# taken only from an explicit $CONCORD_BIN or the PROJECT's OWN target/ build. A project
-# without a local concord build (e.g. ais) therefore stays on its shell coord.sh — so
-# enabling the Rust dogfood for the concord repo does NOT switch ais to Rust. (A global
-# `cargo install concord` + PATH-based resolution that would cover every project is the
-# ais-migration, WP6 — a separate operator decision.)
+# The coordination CLI the hooks drive. Resolution order:
+#   1. $CONCORD_BIN              — an explicit override.
+#   2. the PROJECT's own target/ build — a checked-out concord repo uses its fresh build.
+#   3. a global `concord` on PATH — an installed binary (curl|sh / cargo install / release);
+#      this is what lets a project with NO local build (e.g. ais) drive the Rust tool.
+#   4. the shell coord.sh        — the instant fallback if no concord is present.
+# The Rust binary and the shell read/write the SAME on-disk state, so falling back to the
+# shell is safe; and with no concord anywhere the hooks stay on the shell — fail-safe.
 COORD_SH=""
 for c in "${CONCORD_BIN:-}" \
          "$PROJECT/target/release/concord" "$PROJECT/target/debug/concord" \
+         "$(command -v concord 2>/dev/null)" \
          "$PROJECT/tools/coord.sh" "$PROJECT/bin/coord.sh" "$PROJECT"-*/tools/coord.sh; do
   [ -n "$c" ] && [ -x "$c" ] && { COORD_SH="$c"; break; }
 done
