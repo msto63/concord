@@ -85,12 +85,13 @@ reconciled with [ROADMAP.md](ROADMAP.md) (the roadmap section each WP serves is 
 adopted, this **supersedes WP11** (no need to paper over BSD-vs-GNU shell differences — Rust's
 stdlib is portable) and gives native Windows support without WSL2.*
 
-> **Operator-Entscheid (2026-06-29):** ADOPT, voller Schnitt **M1+M2+M3**, Start nach der laufenden
-> ais-Welle, dedizierte Session `concord-w`, research-gestützter ADR zuerst (→ `WP12-RUST-PORT.md`,
-> `WP12-RESEARCH.md`). **WP7 + WP8 + WP9 sind in WP12 gefaltet** (= dessen M3 „typisierte Agent-Schicht"):
-> sie sind nicht Nachbarn des Ports, sondern sein Ertrag — ein gemeinsamer typisierter Kern (M1),
-> exponiert als CLI + MCP-Server (`rmcp`), Push via `notify`+debouncer (M2), Inbox/Board/MCP fallen
-> aus dem Kern heraus (M3). M1 (Parität) bleibt eigenständig auslieferbar.
+> **Operator decision (2026-06-29):** ADOPT, the full cut **M1+M2+M3**, starting after the
+> in-flight ais wave, with a dedicated session `concord-w` and a research-backed ADR first
+> (see [ADR-0001](adr/0001-rust-rewrite.md); the research notes are archived locally).
+> **WP7 + WP8 + WP9 are folded into WP12** (its M3 "typed agent layer"): they are not neighbours
+> of the port but its yield — one shared typed core (M1), exposed as CLI + MCP server (`rmcp`),
+> push via `notify` + debouncer (M2), with the inbox/board/MCP falling out of the core (M3).
+> M1 (parity) stays independently shippable.
 - [ ] **Decide** shell-maintenance vs. Rust rewrite (see ROADMAP §11). Owner: operator.
 - [ ] Define the CLI surface (`concord` + the `coord` subcommands) and keep the **file-based state
       layout unchanged**, so the binary is a drop-in replacement that can coexist with the scripts

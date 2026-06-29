@@ -4,7 +4,7 @@
 - **Date:** 2026-06
 - **Refs:** supersedes the *scope* of [ADR-0001](0001-rust-rewrite.md) (the "full M1+M2+M3" cut) ·
   evidence in [`AGENT-MAIL-VERIFICATION.md`](../AGENT-MAIL-VERIFICATION.md) ·
-  landscape in [`COMPETITIVE-LANDSCAPE.md`](../COMPETITIVE-LANDSCAPE.md) · ROADMAP §11
+  competitive landscape (operator-commissioned, archived locally) · ROADMAP §11
 
 ## Context
 
@@ -106,7 +106,7 @@ store; the prose channel stays the human log and the typed JSONL inbox stays the
 ## Sources
 
 - `docs/AGENT-MAIL-VERIFICATION.md` — source-level verification (advisory/no-fencing/Python/no-autonomous-coordinator), this repo.
-- `docs/COMPETITIVE-LANDSCAPE.md` — landscape survey, this repo.
+- Competitive landscape survey — operator-commissioned, kept in the local archive (not published).
 - MCP Agent Mail: https://github.com/Dicklesworthstone/mcp_agent_mail
 - wit (AST symbol locks): https://github.com/amaar-mc/wit
 - M. Kleppmann, fencing tokens: https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
