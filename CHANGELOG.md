@@ -11,6 +11,23 @@ for the enforced release process.
 
 ## [Unreleased]
 
+### Added
+- **Windows portability (M4.1).** The Unix-domain-socket code in `concord-core::ipc`,
+  `concordd`, and `concord-mcp` is now `cfg(unix)`-gated; off Unix, `ipc::mediate` is a
+  no-op so every consequential op falls back to the enforced **Floor** (FS-authoritative
+  leases, the merge singleton, fencing, symbol-locks — all platform-portable). The typed
+  core, CLI, daemon, and MCP server all `cargo check` cleanly for `x86_64-pc-windows-gnu`.
+- **Embedded hooks + `concord install-hooks` (M4.1).** The Claude Code automation scripts
+  ship *inside* the binary (`include_str!`), so a `cargo install`'d `concord` needs no repo
+  checkout to set up. `concord install-hooks [--no-wire]` materializes them into
+  `<coord>/hooks/` (with exec bits) and, on Unix, wires `~/.claude/settings.json` via the
+  proven `install.sh`. `concord init --with-hooks` does both in one step. Off Unix the files
+  are written but `settings.json` is left untouched (session-automation is Unix-only).
+
+### Notes
+- **`cargo-dist` maintenance concern (ADR-0001) RESOLVED.** Verified actively maintained —
+  released as `dist` (v0.31/0.32 in 2026). The M4.2 distribution layer adopts it.
+
 ## [0.4.0] - 2026-06-29
 
 Symbol-level (AST) leases — the differentiator. Concord can now lease a single symbol

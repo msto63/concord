@@ -217,8 +217,7 @@ pub fn cmd_dash(store: &Store) -> ExitCode {
 fn last_prose_post(sync: &str, id: &str) -> Option<String> {
     let needle = format!("### {id} ");
     sync.lines()
-        .filter(|l| l.to_lowercase().starts_with(&needle.to_lowercase()))
-        .last()
+        .rfind(|l| l.to_lowercase().starts_with(&needle.to_lowercase()))
         .map(String::from)
 }
 

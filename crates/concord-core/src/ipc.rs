@@ -13,19 +13,24 @@
 //! and is taken verbatim to end-of-line.
 
 use std::fmt;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 /// Socket file name under the coordination dir.
 pub const SOCKET_NAME: &str = "concordd.sock";
 
-/// Client side of the mediation protocol: connect to the daemon's socket at
+/// Client side of the mediation protocol: connect to the daemon's Unix socket at
 /// `sock_path`, send `req`, and return the parsed response. Returns `None` if the
-/// socket is absent/unreachable or the daemon answered with an error — in all of
-/// which the caller falls back to the Floor (direct FS). Shared by the CLI and the
-/// MCP server so both get the same airtight Strong-tier path when the daemon is up.
+/// socket is absent/unreachable or the daemon answered with an error — in all of which
+/// the caller falls back to the Floor (direct FS). Shared by the CLI and the MCP server
+/// so both get the same airtight Strong-tier path when the daemon is up.
+///
+/// Unix only — the daemon mediation uses a Unix-domain socket. Off Unix (Windows) there
+/// is no daemon, so this returns `None` and every consequential op uses the enforced
+/// Floor (FS-authoritative). A Windows named-pipe Strong tier is a backlog item.
+#[cfg(unix)]
 pub fn mediate(sock_path: &Path, req: &Request) -> Option<Response> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
     if !sock_path.exists() {
         return None;
     }
@@ -37,6 +42,12 @@ pub fn mediate(sock_path: &Path, req: &Request) -> Option<Response> {
         Some(Response::Err(_)) | None => None, // daemon hiccup ⇒ fall back to Floor
         other => other,
     }
+}
+
+/// Off Unix: no daemon mediation — always fall back to the Floor.
+#[cfg(not(unix))]
+pub fn mediate(_sock_path: &Path, _req: &Request) -> Option<Response> {
+    None
 }
 
 /// A request from a client (CLI or MCP server) to the daemon — the consequential
