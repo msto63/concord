@@ -340,6 +340,29 @@ impl Store {
         Ok(())
     }
 
+    /// `init`: scaffold a project's coordination state idempotently. The `sessions/`
+    /// and `leases/` dirs already exist (created on `open`); this additionally creates
+    /// the prose channel (with a header) and the ledger so the project is fully
+    /// bootstrapped and inspectable. Safe to re-run — existing files are left intact.
+    pub fn init(&self) -> Result<()> {
+        if !self.paths.sync.exists() {
+            if let Some(dir) = self.paths.sync.parent() {
+                mkdirs(dir)?;
+            }
+            let header = format!(
+                "# Concord prose channel — {}\n\n> The human audit/discussion log. Structured state lives in {}.\n",
+                self.paths.project.display(),
+                self.paths.coord.display()
+            );
+            fs::write(&self.paths.sync, header)
+                .map_err(|e| ConcordError::io(&self.paths.sync, e))?;
+        }
+        if !self.paths.log.exists() {
+            fs::write(&self.paths.log, "").map_err(|e| ConcordError::io(&self.paths.log, e))?;
+        }
+        Ok(())
+    }
+
     /// `send`: deliver a typed message to the recipient's inbox (`inbox/<to>.jsonl`),
     /// the first-class WP7 path. Same on-disk shape the daemon's demux writes, so a
     /// consumer reads `send`-delivered and derived messages uniformly.

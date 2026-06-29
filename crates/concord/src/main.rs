@@ -76,6 +76,45 @@ fn run(args: &[String]) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
+        "paths" => {
+            // Emit the resolved coordination paths as eval-able shell assignments —
+            // `eval "$(concord paths)"` gives a script/hook the right env for THIS
+            // project (multi-project single-source-of-truth, M5).
+            let p = store.paths();
+            println!("CONCORD_DIR={}", p.coord.display());
+            println!("CONCORD_SYNC={}", p.sync.display());
+            println!("CONCORD_PROJECT={}", p.project.display());
+            Ok(ExitCode::SUCCESS)
+        }
+
+        "init" => {
+            // Bootstrap a project's coordination state (idempotent). Resolve paths from
+            // --project when given, else the cwd convention; scaffold dirs+sync+ledger;
+            // optionally register a comma-separated --ids list.
+            let init_store = match flag_value(rest, "--project") {
+                Some(p) => Store::open(Paths::resolve(std::path::Path::new(p)))?,
+                None => store,
+            };
+            init_store.init()?;
+            let ids: Vec<&str> = flag_value(rest, "--ids")
+                .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+            for id in &ids {
+                init_store.register(id, "(init)")?;
+            }
+            let p = init_store.paths();
+            println!("initialized coordination state:");
+            println!("  coord:   {}", p.coord.display());
+            println!("  sync:    {}", p.sync.display());
+            println!("  project: {}", p.project.display());
+            if ids.is_empty() {
+                println!("  sessions: (none registered — use `concord register <id> <focus>`)");
+            } else {
+                println!("  sessions: {}", ids.join(", "));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
         "claim" => {
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
@@ -416,6 +455,8 @@ fn print_usage() {
     let usage = "\
 Concord — multi-session coordination (Rust port of bin/coord.sh).
 
+  concord init [--project <path>] [--ids a,b,c] # bootstrap a project's coordination state
+  concord paths                                 # print resolved CONCORD_DIR/SYNC/PROJECT (eval-able)
   concord register <id> <focus>                 # once, at session start
   concord heartbeat <id>                         # periodically (keeps you \"alive\")
   concord status                                 # who is active + what is leased
