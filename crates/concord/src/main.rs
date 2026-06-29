@@ -22,7 +22,8 @@
 use std::process::ExitCode;
 
 use concord_core::store::{
-    ClaimOutcome, MergeLockOutcome, OverlapPolicy, ReleaseOutcome, StatusReport, Store,
+    ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
+    StatusReport, Store,
 };
 use concord_core::{Paths, Result};
 
@@ -113,11 +114,29 @@ fn run(args: &[String]) -> Result<ExitCode> {
         "release" => {
             let id = require(rest, 0, "session id")?;
             let area = require(rest, 1, "area")?;
-            match store.release(id, area)? {
-                ReleaseOutcome::Released => println!("released {area}"),
-                ReleaseOutcome::NoLease => println!("no lease on {area}"),
+            // Optional fencing Floor: `release <id> <area> --fence <N>` refuses if the
+            // lease's fence has advanced (a reclaim happened) since the caller acquired.
+            let expected_fence = flag_value(rest, "--fence").and_then(|v| v.parse::<u64>().ok());
+            match store.release(id, area, expected_fence)? {
+                ReleaseOutcome::Released => {
+                    println!("released {area}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ReleaseOutcome::NoLease => {
+                    println!("no lease on {area}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                ReleaseOutcome::NotYours { holder } => {
+                    println!("REFUSED: '{area}' is held by '{holder}', not '{id}' — not releasing");
+                    Ok(ExitCode::from(2))
+                }
+                ReleaseOutcome::FenceStale { current } => {
+                    println!(
+                        "REFUSED: '{area}' fence advanced to {current} (your authority is stale) — not releasing"
+                    );
+                    Ok(ExitCode::from(2))
+                }
             }
-            Ok(ExitCode::SUCCESS)
         }
 
         "merge-lock" => {
@@ -141,9 +160,44 @@ fn run(args: &[String]) -> Result<ExitCode> {
 
         "merge-unlock" => {
             let id = require(rest, 0, "session id")?;
-            store.merge_unlock(id)?;
-            println!("merge lock released");
-            Ok(ExitCode::SUCCESS)
+            match store.merge_unlock(id)? {
+                MergeUnlockOutcome::Released => {
+                    println!("merge lock released");
+                    Ok(ExitCode::SUCCESS)
+                }
+                MergeUnlockOutcome::NotHeld => {
+                    println!("merge lock not held");
+                    Ok(ExitCode::SUCCESS)
+                }
+                MergeUnlockOutcome::NotYours { holder } => {
+                    println!("REFUSED: merge lock held by '{holder}', not '{id}' — not unlocking");
+                    Ok(ExitCode::from(2))
+                }
+            }
+        }
+
+        "verify" => {
+            // Fence-aware self-check: does <id> still legitimately hold <area>?
+            let id = require(rest, 0, "session id")?;
+            let area = require(rest, 1, "area")?;
+            match store.verify_hold(id, area)? {
+                HoldStatus::Held { fence } => {
+                    println!("HELD by {id} (fence {fence})");
+                    Ok(ExitCode::SUCCESS)
+                }
+                HoldStatus::HeldByOther { holder } => {
+                    println!("HELD-BY-OTHER {holder}");
+                    Ok(ExitCode::from(2))
+                }
+                HoldStatus::Stale { holder } => {
+                    println!("STALE (was {holder}, reclaimable)");
+                    Ok(ExitCode::from(2))
+                }
+                HoldStatus::Vacant => {
+                    println!("VACANT");
+                    Ok(ExitCode::from(2))
+                }
+            }
         }
 
         "log" => {
@@ -230,9 +284,10 @@ Concord — multi-session coordination (Rust port of bin/coord.sh).
   concord heartbeat <id>                         # periodically (keeps you \"alive\")
   concord status                                 # who is active + what is leased
   concord claim <id> <area> [why]                # BEFORE editing a shared area
-  concord release <id> <area>                    # when done with the area
+  concord release <id> <area> [--fence N]        # when done (refuses foreign/stale)
+  concord verify <id> <area>                     # do I still hold it? (fencing self-check)
   concord merge-lock <id> [why]                  # BEFORE merging (singleton)
-  concord merge-unlock <id>                      # after the merge
+  concord merge-unlock <id>                      # after the merge (refuses foreign)
   concord log <id> <event...>                    # record a structured intent
   concord sync <id> <target> <topic> <body>      # post to the prose channel
   concord version                                # print the Concord version";
@@ -250,4 +305,12 @@ fn require<'a>(rest: &'a [String], idx: usize, label: &'static str) -> Result<&'
 /// The positional arg at `idx`, or `None`.
 fn opt(rest: &[String], idx: usize) -> Option<&str> {
     rest.get(idx).map(String::as_str)
+}
+
+/// The value following `flag` (e.g. `--fence 7` ⇒ `Some("7")`), or `None`.
+fn flag_value<'a>(rest: &'a [String], flag: &str) -> Option<&'a str> {
+    rest.iter()
+        .position(|a| a == flag)
+        .and_then(|i| rest.get(i + 1))
+        .map(String::as_str)
 }

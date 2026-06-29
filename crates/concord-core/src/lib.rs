@@ -23,5 +23,6 @@ pub use error::{ConcordError, Result};
 pub use model::{LedgerEntry, Lease, MergeLock, Session};
 pub use paths::Paths;
 pub use store::{
-    ClaimOutcome, MergeLockOutcome, OverlapPolicy, ReleaseOutcome, StatusReport, Store,
+    ClaimOutcome, HoldStatus, MergeLockOutcome, MergeUnlockOutcome, OverlapPolicy, ReleaseOutcome,
+    StatusReport, Store,
 };
