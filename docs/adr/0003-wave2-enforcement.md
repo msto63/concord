@@ -1,6 +1,6 @@
 # ADR-0003: Wave 2 — Enforcement-Härtung
 
-- **Status:** Proposed (draft by session `concord-w`; awaiting `hub` review + vision-framing fold + operator sign-off)
+- **Status:** Proposed (draft by `concord-w`, reviewed + vision-framed by `hub`; awaiting operator sign-off, then implementation F1-first)
 - **Date:** 2026-06
 - **Refs:** grounded in [`FEATURE-RESEARCH.md`](../FEATURE-RESEARCH.md) (feature-mining, 2026-06-29) ·
   landscape in [`COMPETITIVE-LANDSCAPE.md`](../COMPETITIVE-LANDSCAPE.md) ·
@@ -37,6 +37,16 @@ classification, provenance, accountability) plus an **intelligent autonomous coo
 **enforced coordination > convenience**, **no reinventing** where mature prior-art fits. Wave 2
 selects strictly along that axis.
 
+> **Why this wave, why now — the dogfood is the requirements source.** Wave 2 is not a wish-list; it
+> hardens the exact failure modes Concord's *own* development surfaced. Building Concord through Concord
+> (the M5 dogfood) repeatedly hit: sessions going dark, the coordinator's heartbeat lapsing,
+> build-env/QEMU contention with no resource primitive, and ACK/escalation rules honored only by
+> convention. F1/F2/F3 fix precisely those — the dogfood turned the protocol's soft spots into a
+> verified requirements list. Wave 2 completes *both* halves of the moat: the **enforced vertical** (F1
+> makes leases hard at the keystroke, F2/F5 extend enforcement, F3 mechanizes policy) and the
+> **intelligent autonomous coordinator** (F4 lets `hub` *measure* fleet health instead of reading
+> prose). Enforced where the market is advisory; measured where it self-reports.
+
 ## Decision
 
 Adopt **Wave 2 — Enforcement-Härtung**: five features, sequenced, each a 🟢 vision-strengthening pick
@@ -44,7 +54,7 @@ from the research's ADOPT tier. F1 first (top lever; cures "going dark"). Each s
 PLAN→build→verify slice under `hub`; one PR per feature (or per coherent sub-slice), no speculative
 batching.
 
-### F1 — Harness-native enforcement wiring *(research A1–A5; ADOPT rank 1)*
+### F1 — Harness-native enforcement wiring *(research A1–A6; ADOPT ranks 1 + 6)*
 
 - **Scope:** wire Concord's *existing* lease-store + MCP server into the Claude Code hook surface:
   - **A1 `PreToolUse`+`mcp_tool`-deny** on `Edit|Write|MultiEdit` → call Concord's MCP tool;
@@ -61,6 +71,10 @@ batching.
   - **A5 `FileChanged`+`watchPaths`** → replace the brittle hand-rolled `stat -f %m … sleep 30` monitor
     (named in CLAUDE.md as the #1 cause of dark sessions) with a harness-native wake on
     `SESSION-SYNC`/registry.
+  - **A6 `PostToolUse`(Edit|Write) → out-of-scope-write detection** *(final sub-slice)* → post-hoc detect
+    a write *outside* the session's leases → log/flag as a policy violation. An audit tooth **behind** the
+    A1 deny (defense-in-depth: catches a violation even if the deny path is bypassed).
+- **Sub-sequence:** A5 + A2 first (low-risk quick wins), then A1 + A3 (the harder enforcement), A6 last.
 - **Value:** 🟢 highest — turns leases from *advisory* to **hard** and cures "going dark" at the harness
   boundary. Lifts Concord's core invariant. **Effort:** S–M per hook (A2/A5 small; A1/A3 medium; A4 S–M).
 - **Vision rationale:** directly hardens the enforced vertical (Cap-checks at the keystroke) and the
@@ -96,6 +110,9 @@ batching.
   Map `session.id`→Concord-id at launch; `hub` computes per session: **burn-rate, idle (no spans for
   N min), looping (repetitive spans / no commit progress), reject-storms**. Add **ccusage** (local
   JSONL→token/cost, no upload) for the cost view.
+- **Final sub-slice — B3 dark-session watchdog:** a multi-stage health watcher consumes this telemetry
+  (+ the existing heartbeat data) and **actively alerts `hub`** on a miss / lease-but-silent, instead of
+  only passively reclaiming on TTL — active alerting directly against the #1 failure mode.
 - **Value:** 🟢/🟡 — makes `hub` *telemetry-driven*, turning "no silent idling" from self-report into a
   **measured** signal. The emitting side is built-in/free. **Effort:** M (S for ccusage).
 - **Vision rationale:** the intelligent-coordinator half of the moat. Build the heuristic **natively on
@@ -111,12 +128,11 @@ batching.
 - **Vision rationale:** turns the one sanctioned peer interaction from prose into an enforced contract,
   pairing with the merge-lock.
 
-> **Fold-in candidate (for `hub` to place):** research **A6 (out-of-scope-write detection,
+> **Folded in (resolved in `hub` review):** research **A6 (out-of-scope-write detection,
 > `PostToolUse`)** + **B3 (dark-session watchdog with active alerting)** — ADOPT rank 6 — are the audit
 > teeth *behind* the leases (catch a write outside lease even if A1 is bypassed) and active alerting vs.
-> passive reclaim. They compose naturally onto F1 (same hook surface) and F4 (watchdog consumes
-> telemetry). Proposed: attach A6 as F1's final sub-slice and B3 as F4's, **or** defer both to a small
-> Wave-2.5 — `hub`'s call.
+> passive reclaim. **A6 ships as F1's final sub-slice** (an audit tooth behind the deny = defense-in-depth);
+> **B3 ships as F4's final sub-slice** (it consumes the telemetry). No separate Wave-2.5.
 
 ### Adopt order + rationale
 
@@ -202,15 +218,20 @@ not a new core:
   directive*, with a hard turn cap); (c) telemetry false idle/loop signals → tune N-min windows on real
   fleet data before acting on them.
 
-## Open questions (for `hub` review / operator sign-off)
+## Open questions (resolved in `hub` review)
 
-1. **F1 sub-sequencing:** ship A5 (`FileChanged` wake) + A2 (`SessionEnd` release) first as the quick,
-   low-risk wins, then A1 (deny) + A3 (`Stop`) as the harder enforcement pieces? (Proposed: yes.)
-2. **A6 + B3 placement:** fold into F1/F4 as final sub-slices, or a separate Wave-2.5? (Proposed: fold.)
-3. **F4 storage:** native heuristic only, or also persist spans to a local store (Langfuse OTLP fallback)
-   for post-hoc audit? (Proposed: native-only now; fallback deferred.)
-4. **F5 contract store format:** versioned snapshot under `<coord>/contracts/` keyed by `<file>:<symbol>`,
-   reusing the AST extraction — confirm the key scheme.
+1. **F1 sub-sequencing — RESOLVED: yes.** Ship A5 (`FileChanged` wake) + A2 (`SessionEnd` release) first
+   as the quick, low-risk wins, then A1 (deny) + A3 (`Stop`) as the harder enforcement pieces.
+2. **A6 + B3 placement — RESOLVED: fold.** A6 (out-of-scope-write / `PostToolUse`) becomes F1's final
+   sub-slice (an audit tooth *behind* the deny = defense-in-depth); B3 (dark-session watchdog) becomes
+   F4's final sub-slice (it consumes the telemetry). No separate Wave-2.5.
+3. **F4 storage — RESOLVED: native-only now.** Per Policy 3 (no SaaS dependency); the Langfuse OTLP
+   fallback store is deferred unless a concrete need pulls it.
+4. **F5 contract store format — RESOLVED.** Versioned snapshot under `<coord>/contracts/` keyed by
+   `<file>:<symbol>`, reusing the S2 AST extraction + symbol-lease key scheme (consistent with the
+   existing symbol-lease keys).
+
+(Operator sign-off on the wave as a whole remains; `hub` presents the final ADR to the operator.)
 
 ## Sources
 
