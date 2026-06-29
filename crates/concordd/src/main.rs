@@ -44,6 +44,8 @@ use concord_core::Store;
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 
+mod telemetry;
+
 fn main() {
     let once = std::env::args().skip(1).any(|a| a == "--once");
     // F-config bootstrap: env retired; coord resolves by convention, with a legacy env
@@ -81,6 +83,15 @@ fn main() {
     {
         let p = paths.clone();
         std::thread::spawn(move || run_socket_server(&p));
+    }
+
+    // F4: the OTLP/HTTP-JSON telemetry receiver (Unix only — same as the mediation socket;
+    // documented Windows limitation). Only when enabled in config.
+    #[cfg(unix)]
+    if config.telemetry.enabled {
+        let p = paths.clone();
+        let port = config.telemetry.port;
+        std::thread::spawn(move || telemetry::run_receiver(&p, port));
     }
 
     run_watch_loop(&paths);
@@ -282,6 +293,15 @@ fn tick_acks(paths: &Paths) {
         Ok(r) => r,
         Err(_) => return,
     };
+    // F4/B3 watchdog: telemetry-idle sessions holding work auto-escalate (reuses F3).
+    let full = concord_config::load(&paths.coord);
+    if full.telemetry.enabled {
+        if let Ok(raised) = store.telemetry_watchdog(&full.telemetry, &cfg.coordinator) {
+            if !raised.is_empty() {
+                eprintln!("[concordd] watchdog: {} dark-session escalation(s)", raised.len());
+            }
+        }
+    }
     for r in &report.redelivered {
         let msg = Message {
             ts: clock::now(),

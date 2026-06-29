@@ -15,6 +15,7 @@ path = "src/main.rs"
 concord-config = { path = "../concord-config" }
 concord-core = { path = "../concord-core" }
 notify = "8.2.0"
+serde_json = "1"
 notify-debouncer-full = "0.7.0"
 # notify + debouncer-full: research [4][5] — directory-level watch, debounced,
 # rename/move-aware (atomic-rename robust).

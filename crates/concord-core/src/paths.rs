@@ -38,6 +38,8 @@ pub struct Paths {
     /// `$COORD/escalations` — the F3 tracked-escalation records (one dir per escalation,
     /// persisted until resolved).
     pub escalations: PathBuf,
+    /// `$COORD/telemetry` — the F4 per-session normalized telemetry log (`<id>.jsonl`).
+    pub telemetry: PathBuf,
     /// `$COORD/intents.jsonl`.
     pub log: PathBuf,
     /// `$COORD/merge.lock` (singleton merge gate).
@@ -97,6 +99,7 @@ impl Paths {
             resources: coord.join("resources"),
             acks: coord.join("acks"),
             escalations: coord.join("escalations"),
+            telemetry: coord.join("telemetry"),
             log: coord.join("intents.jsonl"),
             merge_lock: coord.join("merge.lock"),
             coord,
@@ -146,6 +149,11 @@ impl Paths {
     /// The directory for escalation record `seq` (F3).
     pub fn escalation_dir(&self, seq: u64) -> PathBuf {
         self.escalations.join(seq.to_string())
+    }
+
+    /// The normalized telemetry log for a session (F4).
+    pub fn telemetry_file(&self, id: &str) -> PathBuf {
+        self.telemetry.join(format!("{}.jsonl", crate::slug::slug(id)))
     }
 }
 
@@ -206,6 +214,7 @@ mod tests {
             resources: PathBuf::from("/x/ais-coord/resources"),
             acks: PathBuf::from("/x/ais-coord/acks"),
             escalations: PathBuf::from("/x/ais-coord/escalations"),
+            telemetry: PathBuf::from("/x/ais-coord/telemetry"),
             log: PathBuf::from("/x/ais-coord/intents.jsonl"),
             merge_lock: PathBuf::from("/x/ais-coord/merge.lock"),
             sync: PathBuf::from("/x/ais-SESSION-SYNC.md"),

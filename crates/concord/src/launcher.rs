@@ -126,9 +126,18 @@ pub fn cmd_start(paths: &Paths, id: &str, print: bool) -> ExitCode {
     // (the hooks read `<coord>/idbind/<slug(worktree)>`), so no CONCORD_ID env is needed.
     write_idbind(paths, &worktree, id);
 
+    // F4: when telemetry is on, point this session's native OTel at Concord's local
+    // receiver + tag every metric with `concord.id`. These are Claude Code's OWN OTEL_*
+    // vars (set by the launcher) — NOT Concord env, so no conflict with the F-config
+    // env-retirement. Metrics-only (no OTEL_LOG_USER_PROMPTS) — privacy by construction.
+    let env_refs = otel_env(&cfg, id);
+
     if print {
         println!("▶ would start session {id} · worktree: {} · {role}", worktree.display());
         println!("  idbind: {} = {id}", idbind_path(paths, &worktree).display());
+        if !env_refs.is_empty() {
+            println!("  telemetry env: {}", env_refs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
+        }
         println!("  exec: claude {} <kickoff-prompt>", flags.join(" "));
         println!("  prompt-file: {}", pf.display());
         println!("  ── kickoff prompt ──\n{prompt}");
@@ -136,7 +145,24 @@ pub fn cmd_start(paths: &Paths, id: &str, print: bool) -> ExitCode {
     }
 
     println!("▶ Session {id} in DIESEM Terminal · Worktree: {} · volle Rechte · {role}.", worktree.display());
-    spawn_claude(&worktree, &flags, &prompt, &[])
+    spawn_claude(&worktree, &flags, &prompt, &env_refs)
+}
+
+/// The Claude Code OTel environment for a launched session (F4), or empty when telemetry
+/// is disabled. Points the native OTLP/HTTP-JSON exporter at Concord's local receiver and
+/// tags every metric with `concord.id` via a resource attribute.
+fn otel_env(cfg: &Config, id: &str) -> Vec<(&'static str, String)> {
+    if !cfg.telemetry.enabled {
+        return Vec::new();
+    }
+    vec![
+        ("CLAUDE_CODE_ENABLE_TELEMETRY", "1".to_string()),
+        ("OTEL_METRICS_EXPORTER", "otlp".to_string()),
+        ("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json".to_string()),
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", format!("http://127.0.0.1:{}", cfg.telemetry.port)),
+        ("OTEL_RESOURCE_ATTRIBUTES", format!("concord.id={id}")),
+        ("OTEL_METRIC_EXPORT_INTERVAL", "10000".to_string()),
+    ]
 }
 
 /// The idbind marker path for a worktree (F-config): `<coord>/idbind/<slug(worktree)>`.
@@ -292,6 +318,7 @@ mod tests {
             resources: PathBuf::new(),
             acks: PathBuf::new(),
             escalations: PathBuf::new(),
+            telemetry: PathBuf::new(),
             log: PathBuf::new(),
             merge_lock: PathBuf::new(),
             sync: PathBuf::new(),

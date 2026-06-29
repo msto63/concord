@@ -66,7 +66,7 @@ discussion channel is `<repo>-SESSION-SYNC.md` (both next to the repo).
 | Platform | Enforcement | Notes |
 |---|---|---|
 | **macOS / Linux** | **Strong** (airtight) | Full stack: the `concordd` daemon mediates consequential writes over a Unix socket (the single serialization point), plus the FS-authoritative Floor and the Claude Code session-automation hooks. |
-| **Windows** | **Floor** (FS-authoritative) | Leases, the merge singleton, fencing, and symbol-locks all enforce via the shared filesystem — the core guarantees hold. The daemon's Unix-socket Strong tier and the bash/python session-automation hooks are Unix-only; `concord install-hooks` lays the scripts down but leaves `settings.json` untouched off Unix. A Windows named-pipe Strong tier is a [backlog](docs/BACKLOG.md) item. |
+| **Windows** | **Floor** (FS-authoritative) | Leases, the merge singleton, fencing, and symbol-locks all enforce via the shared filesystem — the core guarantees hold. The daemon's Unix-socket Strong tier, the **F4 telemetry receiver**, and the bash/python session-automation hooks are Unix-only; `concord install-hooks` lays the scripts down but leaves `settings.json` untouched off Unix. A Windows named-pipe Strong tier is a [backlog](docs/BACKLOG.md) item. |
 
 The typed core (`concord-core`), CLI, daemon, and MCP server all compile cleanly for
 Windows — the Unix-socket paths are `cfg`-gated to a no-op so every consequential op

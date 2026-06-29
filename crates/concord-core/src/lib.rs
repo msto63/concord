@@ -22,6 +22,7 @@ pub mod model;
 pub mod paths;
 pub mod slug;
 pub mod store;
+pub mod telemetry;
 
 pub use error::{ConcordError, Result};
 pub use model::{LedgerEntry, Lease, MergeLock, Session};
