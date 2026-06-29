@@ -14,9 +14,14 @@ BIN="${CONCORD_MCP_BIN:-$HERE/target/debug/concord-mcp}"
 [ -x "$BIN" ] || ( cd "$HERE" && cargo build -p concord-mcp -q )
 [ -x "$BIN" ] || { echo "FATAL: concord-mcp not built at $BIN"; exit 1; }
 
-W=$(mktemp -d "${TMPDIR:-/tmp}/mcp-smoke.XXXXXX"); CD="$W/coord"; SY="$W/SYNC.md"; mkdir -p "$CD"
+W=$(mktemp -d "${TMPDIR:-/tmp}/mcp-smoke.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 fail=0
+# Isolation by CONVENTION (concord-mcp resolves its coord dir from the git toplevel, not
+# from env): run the server inside a throwaway git project so its coord is `$W/proj-coord`,
+# never the live one. The leaked-env guard (env -u …) is the incident lesson — never let an
+# ambient CONCORD_DIR/AIS_* point the server at a real coordination dir.
+PROJ="$W/proj"; mkdir -p "$PROJ"; ( cd "$PROJ" && git init -q )
 
 # Helper: run one MCP session (initialize + initialized + the given request lines).
 mcp() {  # <request-json-line>...
@@ -24,7 +29,9 @@ mcp() {  # <request-json-line>...
      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
      '{"jsonrpc":"2.0","method":"notifications/initialized"}'
     printf '%s\n' "$@"
-  } | CONCORD_DIR="$CD" CONCORD_SYNC="$SY" perl -e 'alarm 15; exec @ARGV' "$BIN" 2>/dev/null || true
+  } | ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT \
+        -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR \
+        perl -e 'alarm 15; exec @ARGV' "$BIN" 2>/dev/null ) || true
 }
 
 # Session 1 — discover tools + WRITE state (register + claim).

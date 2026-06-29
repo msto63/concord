@@ -11,6 +11,19 @@ for the enforced release process.
 
 ## [Unreleased]
 
+### CI / housekeeping
+- **`tests/mcp-smoke.sh` now runs in CI** (it was unreferenced and could rot). It drives the
+  MCP server over a real JSON-RPC handshake and asserts the enforced-only tool surface.
+  Hardened to isolate by the git-toplevel convention (concord-mcp resolves its coord dir
+  from the toplevel, not env) so it never touches a live coordination dir.
+- **Retired the one-off ais cutover script** to the local, git-ignored archive — its
+  migration has been stable for weeks; only historical rollback remained.
+- **Trimmed the public documentation surface to what a user needs:** README, `docs/MANUAL.md`,
+  `docs/QUICKSTART.md`, CHANGELOG, CONTRIBUTING, LICENSE. Internal/superseded artifacts (the
+  ADR records, the backlog, the roadmap, the dogfood runbook, and the agent-mail verification
+  note) moved to the local, git-ignored archive (off-GitHub). Dangling internal links removed
+  or softened; the contributor workflow now points at GitHub issues.
+
 ### Documentation
 - **Publication polish.** All project documentation is now English. The README is rewritten
   in plain, jargon-light language covering every feature (incl. the autonomous coordinator

@@ -278,6 +278,6 @@ project's `coord.sh` to `bin/coord.sh` so there is a single source of truth.
 - **Run sessions in the current terminal**, not a spawned window — simpler, terminal-agnostic, and
   it puts each session in the tab you chose.
 - **The prose channel grows monotonically and every session reads it** — this is the main token
-  cost, and the motivation for per-recipient inboxes (see [ROADMAP](ROADMAP.md) §9).
+  cost, and the motivation for per-recipient inboxes (a planned enhancement).
 - **A bare background `while true` does not wake an AI session.** Use the harness monitor + a timer.
 - **Worktrees must follow the `<repo>-<id>` convention** so the CLI can derive paths without a map.
