@@ -35,11 +35,20 @@ done
 # cwd does NOT identify the logical session). Empty if unset → hooks no-op (never
 # guess a wrong id). Optional fallback file lets a running session self-declare.
 concord_id() {
+  # F-config: env is retired (convention-first). Resolution order:
+  #  1. $CONCORD_ID — legacy, honored for continuity (deprecated; removed next release).
+  #  2. idbind marker keyed by the worktree (git toplevel), written by `concord start`.
+  #  3. convention: the worktree basename `<repo>-<id>` → the `<id>` suffix.
   if [ -n "${CONCORD_ID:-}" ]; then printf '%s' "$CONCORD_ID"; return 0; fi
-  # Fallback: a marker a session may write to claim its id for this tty/pane.
-  local tty mk
-  tty=$(tty 2>/dev/null); mk="$COORD/idbind/$(printf '%s' "${tty:-none}" | tr '/ ' '__')"
-  [ -f "$mk" ] && printf '%s' "$(cat "$mk" 2>/dev/null)"
+  local top mk
+  top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  mk="$COORD/idbind/$(printf '%s' "$top" | tr '/ ' '__')"
+  [ -f "$mk" ] && { printf '%s' "$(cat "$mk" 2>/dev/null)"; return 0; }
+  # Convention fallback: <repo>-<id> worktree name.
+  local proj repo base
+  proj="${PROJECT:-${COORD%-coord}}"; repo=$(basename "$proj")
+  base=$(basename "$top")
+  case "$base" in "$repo"-?*) printf '%s' "${base#"$repo"-}";; esac
 }
 
 # ANSI colour for a session id (for the statusline). Case-insensitive (K == k).

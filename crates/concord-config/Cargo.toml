@@ -1,0 +1,13 @@
+[package]
+name = "concord-config"
+description = "config.toml loader for Concord (isolates the toml/serde dep; concord-core stays dep-free)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+concord-core = { path = "../concord-core" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

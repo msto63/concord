@@ -52,13 +52,13 @@ fn ack_tracking_redeliver_then_auto_escalate() {
     assert_eq!(store_at(&paths, t0).pending_summary().unwrap(), vec![("w".to_string(), 1u32, t0)]);
 
     // Not yet due (before t0 + ttl): no action.
-    let tick0 = store_at(&paths, t0 + 10).tick_acks(ttl, k).unwrap();
+    let tick0 = store_at(&paths, t0 + 10).tick_acks(ttl, k, "hub").unwrap();
     assert!(tick0.redelivered.is_empty() && tick0.escalated.is_empty());
 
     // t0+ttl → first re-delivery; t0+2ttl → second; t0+3ttl → auto-escalate.
-    assert_eq!(store_at(&paths, t0 + ttl).tick_acks(ttl, k).unwrap().redelivered.len(), 1);
-    assert_eq!(store_at(&paths, t0 + 2 * ttl).tick_acks(ttl, k).unwrap().redelivered.len(), 1);
-    let r3 = store_at(&paths, t0 + 3 * ttl).tick_acks(ttl, k).unwrap();
+    assert_eq!(store_at(&paths, t0 + ttl).tick_acks(ttl, k, "hub").unwrap().redelivered.len(), 1);
+    assert_eq!(store_at(&paths, t0 + 2 * ttl).tick_acks(ttl, k, "hub").unwrap().redelivered.len(), 1);
+    let r3 = store_at(&paths, t0 + 3 * ttl).tick_acks(ttl, k, "hub").unwrap();
     assert_eq!(r3.escalated.len(), 1, "auto-escalated after K misses");
     assert!(r3.redelivered.is_empty());
 
@@ -70,7 +70,7 @@ fn ack_tracking_redeliver_then_auto_escalate() {
     assert_eq!(esc[0].reference.as_deref(), Some("w"));
 
     // Further ticks do not re-escalate (pending is marked escalated).
-    let r4 = store_at(&paths, t0 + 9 * ttl).tick_acks(ttl, k).unwrap();
+    let r4 = store_at(&paths, t0 + 9 * ttl).tick_acks(ttl, k, "hub").unwrap();
     assert!(r4.escalated.is_empty() && r4.redelivered.is_empty());
 
     // Derived ack: once `w` posts (clear_pending), the debt is gone.

@@ -46,7 +46,16 @@ use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 
 fn main() {
     let once = std::env::args().skip(1).any(|a| a == "--once");
-    let paths = Paths::from_cwd();
+    // F-config bootstrap: env retired; coord resolves by convention, with a legacy env
+    // override honored-with-warning for one release (keeps existing daemon launches working).
+    let (overrides, warns) = concord_config::legacy_env_overrides();
+    for w in &warns {
+        eprintln!("{w}");
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut paths = Paths::resolve_with(&cwd, &overrides);
+    let config = concord_config::load(&paths.coord);
+    paths.ttl = config.leases.stale_ttl;
     fs::create_dir_all(inbox_dir(&paths)).ok();
 
     if once {
@@ -262,13 +271,14 @@ fn run_watch_loop(paths: &Paths) {
 /// The spacing/threshold logic lives in [`Store::tick_acks`]; the daemon performs the
 /// inbox append (the wake) for each returned re-delivery.
 fn tick_acks(paths: &Paths) {
-    const TTL_ACK: u64 = 15 * 60; // ≈ one worker tick
-    const K_REDELIVER: u32 = 2; // re-deliver twice, then escalate (severity High)
+    // F-config: TTL / K-redeliver / coordinator come from config.toml (defaults: 15 min,
+    // 2 re-deliveries, coordinator "hub").
+    let cfg = concord_config::load(&paths.coord).escalation;
     let store = match concord_core::Store::open_at(paths.clone(), clock::now()) {
         Ok(s) => s,
         Err(_) => return,
     };
-    let report = match store.tick_acks(TTL_ACK, K_REDELIVER) {
+    let report = match store.tick_acks(cfg.ack_ttl, cfg.redeliver_max, &cfg.coordinator) {
         Ok(r) => r,
         Err(_) => return,
     };

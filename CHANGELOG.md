@@ -11,6 +11,35 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-29
+
+F-config (operator-inserted between F3 and F4): ONE `config.toml`, environment variables
+retired. Configuration is now explicit and inspectable instead of ambient env state.
+(ADR-0003 §F-config.)
+
+### Added
+- **`config.toml`.** A project `<coord>/config.toml` (`[leases]/[daemon]/[launcher]/
+  [escalation]/[resources]`) layered over a user-global `~/.config/concord/config.toml`
+  (which adds a `[projects]` bootstrap map), over built-in defaults — **`config.toml` >
+  defaults, no env.** `concord init` drops a commented sample. The `toml`/`serde` parse is
+  isolated in a new **`concord-config`** crate, so `concord-core` stays dependency-free and
+  takes a plain `Config`. A malformed file warns and falls back (never crashes).
+- **Env-free bootstrap.** The two values config can't define resolve by convention + flags:
+  **coord dir** = git-toplevel `<repo>-coord` / `--coord` / the user-global `[projects]`
+  map; **session id** = worktree `<repo>-<id>` / `--id` / an idbind marker
+  (`<coord>/idbind/<worktree>`, written by `concord start`). The launcher no longer exports
+  `CONCORD_ID`; the hooks derive id from the marker / convention.
+- New CI smoke `tests/config.sh` + `concord-config` unit tests.
+
+### Changed / Deprecated
+- **Environment variables are retired.** `CONCORD_DIR`/`AIS_COORD_DIR`, `CONCORD_SYNC`/
+  `AIS_SYNC_FILE`, `CONCORD_PROJECT`/`AIS_PROJECT_DIR`, `AIS_COORD_TTL`,
+  `CONCORD_STRICT_OVERLAP`, `CONCORD_NO_DAEMON`, `CONCORD_CLAUDE_FLAGS`,
+  `CONCORD_COORDINATOR_ID` all move to `config.toml`/flags/convention. A still-set legacy
+  var is **honored with a one-time deprecation warning** this release (protecting existing
+  setups), and **removed entirely next release**. The `<coord>/strict-leases` marker folds
+  into `[leases] strict`.
+
 ## [0.8.0] - 2026-06-29
 
 Wave 2 — F3: ack-tracking + tracked escalation. Two CLAUDE.md prose policies that were

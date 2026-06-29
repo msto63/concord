@@ -144,6 +144,24 @@ batching.
 > passive reclaim. **A6 ships as F1's final sub-slice** (an audit tooth behind the deny = defense-in-depth);
 > **B3 ships as F4's final sub-slice** (it consumes the telemetry). No separate Wave-2.5.
 
+### F-config — one config.toml, env retired *(operator-inserted between F3 and F4)*
+
+- **Scope:** consolidate all tunables into ONE `config.toml` and **retire the environment
+  variables**. Project `<coord>/config.toml` (sections `[leases]/[daemon]/[launcher]/
+  [escalation]/[resources]`) over a user-global `~/.config/concord/config.toml` (which adds
+  a `[projects]` bootstrap map) over built-in defaults — **`config.toml` > defaults, no env.**
+  The two bootstrap values config cannot define (they locate the config) resolve env-free:
+  **coord dir** by convention (git-toplevel `<repo>-coord`) / `--coord` / the `[projects]`
+  map; **session id** by convention (worktree `<repo>-<id>`) / `--id` / an idbind marker
+  (`<coord>/idbind/<worktree>`, written by `concord start` — no `CONCORD_ID` env). The
+  `toml`/`serde` parse is **isolated in a `concord-config` crate** (like `concord-ast`
+  isolates tree-sitter), so `concord-core` stays dependency-free and takes a plain `Config`.
+- **Value:** 🟢 — a single, human-editable source of truth; removes the env-coupling that
+  made setups fragile and implicit. **Effort:** M.
+- **Vision rationale:** explicit, inspectable configuration over ambient environment state.
+- **Backward-compat:** a still-set legacy env var is **honored with a deprecation warning**
+  (not a break) for this release — protecting the live dogfood — then fully removed next.
+
 ### Adopt order + rationale
 
 **F1 → F2 → F3 → F4 → F5**, ordered by *value × readiness*:

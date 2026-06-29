@@ -21,7 +21,7 @@ cx init --project "$PROJ" --ids hub,a >/dev/null
 o=$( cd "$PROJ" && cx start a --print 2>&1 )
 chk "start a --print: worker role"        "$o" "worker · announces READY"
 chk "start a --print: worktree convention" "$o" "myproj-a"
-chk "start a --print: sets CONCORD_ID"     "$o" "CONCORD_ID=a"
+chk "start a --print: binds id via idbind" "$o" "idbind"
 chk "start a --print: worker kickoff text" "$o" "You are Concord worker session a"
 chk "start a --print: no real spawn"       "$o" "would start session a"
 
