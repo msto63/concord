@@ -11,6 +11,19 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-30
+
+### Fixed
+- **Multi-worktree hooks write the right coord.** The hooks compute `COORD` from their own
+  location (`<coord>/hooks`) but invoked the binary without `--coord`, so the binary
+  re-resolved location by cwd convention — from a `<repo>-<id>` **suffix worktree** that
+  derived `<repo>-<id>-coord` instead of `<repo>-coord` (e.g. a session in `ais-a` wrote to
+  `ais-a-coord`). The single-worktree dogfood (`…/concord` → `concord-coord`) never hit it.
+  The hooks now pass the already-correct `--coord "$COORD"` through a small `coord()` wrapper,
+  but **only to the Rust binary** — the legacy shell `coord.sh` rejects `--coord` and resolves
+  the coord itself, so the wrapper detects which one `COORD_SH` is (`*coord.sh` ⇒ shell) and
+  the shell fallback path is unchanged. Covered by `tests/hook-coord-passthrough.sh`.
+
 ## [0.12.0] - 2026-06-30
 
 ### Changed (breaking)

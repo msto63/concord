@@ -9,7 +9,7 @@
 . "$(dirname "$0")/lib.sh" 2>/dev/null || exit 0
 id=$(concord_id); [ -z "$id" ] && exit 0
 [ -n "$COORD_SH" ] || exit 0
-"$COORD_SH" heartbeat "$id" >/dev/null 2>&1
+coord heartbeat "$id" >/dev/null 2>&1
 
 input=$(cat 2>/dev/null)
 [ -n "$input" ] || exit 0
@@ -34,8 +34,8 @@ case "$f" in "$top"/*) rel="${f#"$top"/}";; esac
 # Note: A6 always uses the P2 conflict test (would another active holder be stepped on?),
 # independent of the strict-leases marker — strict-P1 is an A1 ergonomics knob, not an
 # accountability one.
-out=$("$COORD_SH" check-lease "$id" "$rel" 2>/dev/null) || true
+out=$(coord check-lease "$id" "$rel" 2>/dev/null) || true
 case "$out" in
-  DENY*) "$COORD_SH" log "$id" "out-of-scope-write: $rel ($out)" >/dev/null 2>&1 ;;
+  DENY*) coord log "$id" "out-of-scope-write: $rel ($out)" >/dev/null 2>&1 ;;
 esac
 exit 0
