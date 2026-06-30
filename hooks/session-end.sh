@@ -6,5 +6,5 @@
 . "$(dirname "$0")/lib.sh" 2>/dev/null || exit 0
 id=$(concord_id); [ -z "$id" ] && exit 0
 [ -n "$COORD_SH" ] || exit 0
-"$COORD_SH" session-end "$id" >/dev/null 2>&1
+coord session-end "$id" >/dev/null 2>&1
 exit 0

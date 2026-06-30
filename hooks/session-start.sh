@@ -13,9 +13,9 @@ try: print(json.load(sys.stdin).get("source",""))
 except Exception: print("")' 2>/dev/null)
 
 if [ -f "$COORD/sessions/$id" ]; then
-  "$COORD_SH" heartbeat "$id" >/dev/null 2>&1            # keep existing focus
+  coord heartbeat "$id" >/dev/null 2>&1            # keep existing focus
 else
-  "$COORD_SH" register "$id" "(session started)" >/dev/null 2>&1
+  coord register "$id" "(session started)" >/dev/null 2>&1
 fi
 
 # A4: after a compaction, replay the snapshot the PreCompact hook saved, then clear it.

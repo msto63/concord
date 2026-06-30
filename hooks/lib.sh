@@ -26,6 +26,25 @@ for c in "${CONCORD_BIN:-}" \
   [ -n "$c" ] && [ -x "$c" ] && { COORD_SH="$c"; break; }
 done
 
+# Is COORD_SH the Rust binary or the legacy shell `coord.sh`? Only the Rust binary takes the
+# explicit `--coord` bootstrap flag; the shell rejects it (and resolves the coord itself). The
+# shell candidates end in `coord.sh`; anything else is a concord binary. (Edge case: a
+# $CONCORD_BIN pointing at a `…coord.sh` is classified as the shell — acceptable, since
+# CONCORD_BIN is meant to name a concord binary.)
+case "$COORD_SH" in
+  ""|*coord.sh) COORD_SH_RUST="" ;;
+  *)           COORD_SH_RUST=1 ;;
+esac
+
+# Drive the resolved coordinator with a verb. The hooks already computed COORD from their own
+# location (<coord>/hooks), but the Rust binary otherwise re-resolves location by cwd
+# convention — which is WRONG from a `<repo>-<id>` suffix worktree (it would derive
+# `<repo>-<id>-coord` instead of `<repo>-coord`). So pass the already-correct COORD explicitly,
+# but ONLY to the Rust binary; the shell can't take `--coord` and resolves the coord on its own.
+coord() {
+  if [ -n "$COORD_SH_RUST" ]; then "$COORD_SH" --coord "$COORD" "$@"; else "$COORD_SH" "$@"; fi
+}
+
 # Print the Concord session-id. Identity is an EXPLICIT declaration — never inherited
 # ambiently from the location environment. Resolution order (all three explicit/structural):
 #   1. $CONCORD_ID — the explicit launch override (`CONCORD_ID=hub claude …`), the peer of

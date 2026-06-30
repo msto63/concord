@@ -54,7 +54,7 @@ case "$tool" in
     case "$f" in "$top"/*) rel="${f#"$top"/}";; esac
     strict=""; [ -f "$COORD/strict-leases" ] && strict="--strict"
     # Typed-core decision; fail-open on any error (out=empty / nonzero-from-missing-binary).
-    out=$("$COORD_SH" check-lease "$id" "$rel" $strict 2>/dev/null) || true
+    out=$(coord check-lease "$id" "$rel" $strict 2>/dev/null) || true
     case "$out" in
       DENY*)
         deny "Concord: '$rel' is leased — $out. Coordinate first (status / SESSION-SYNC; claim after the holder releases) instead of editing in parallel. Override: release/reassign the lease, or remove $COORD/strict-leases." ;;
