@@ -24,11 +24,14 @@ have() { grep -qF "$1" "$2" 2>/dev/null; }
 
 # ── 1. --once demux mechanics ──
 W=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
-CD="$W/coord"; SY="$W/SYNC.md"
+# F-config: coord + prose channel resolve by CONVENTION from a throwaway project's git
+# toplevel — run the binaries with cwd=$PROJ; there is no location env to set.
+PROJ="$W/proj"; mkdir -p "$PROJ"; ( cd "$PROJ" && git init -q )
+CD="$W/proj-coord"; SY="$W/proj-SESSION-SYNC.md"
 mkdir -p "$CD/sessions"; : > "$CD/sessions/a"; : > "$CD/sessions/hub"; : > "$CD/sessions/concord-w"
 printf '### hub → concord-w  (go)\nbody-go\n### x → ALLE  (bcast)\nhi-all\n### hub → a  (direct)\nyo-a\n' > "$SY"
 echo 0 > "$CD/.inbox-offset"
-CONCORD_DIR="$CD" CONCORD_SYNC="$SY" "$DD" --once >/dev/null 2>&1
+( cd "$PROJ" && "$DD" --once ) >/dev/null 2>&1
 
 # concord-w: directed 'go' + broadcast 'bcast'; a: broadcast + directed 'direct'; hub: broadcast only.
 if have "(go)" "$CD/inbox/concord-w.jsonl" && have "(bcast)" "$CD/inbox/concord-w.jsonl" && ! have "(direct)" "$CD/inbox/concord-w.jsonl"; then
@@ -42,7 +45,7 @@ if have "(bcast)" "$CD/inbox/hub.jsonl" && ! have "(go)" "$CD/inbox/hub.jsonl"; 
 else echo "✗ 1c: inbox/hub wrong"; fail=1; fi
 # Broadcast sender exclusion: a directive '### concord-w → ALLE' must NOT echo to concord-w.
 printf '### concord-w → ALLE  (selfcast)\nself\n' >> "$SY"
-CONCORD_DIR="$CD" CONCORD_SYNC="$SY" "$DD" --once >/dev/null 2>&1
+( cd "$PROJ" && "$DD" --once ) >/dev/null 2>&1
 if ! have "(selfcast)" "$CD/inbox/concord-w.jsonl" && have "(selfcast)" "$CD/inbox/hub.jsonl"; then
   echo "✓ 1d: broadcast excludes its own sender"
 else echo "✗ 1d: sender exclusion failed"; fail=1; fi
@@ -53,8 +56,9 @@ else echo "✗ 1e: typed kind missing"; fail=1; fi
 rm -rf "$W"
 
 # ── 1f. first-class typed send ──
-W4=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX"); CD4="$W4/coord"; SY4="$W4/SYNC.md"; mkdir -p "$CD4"
-CONCORD_DIR="$CD4" CONCORD_SYNC="$SY4" "$CC" send hub concord-w go --ref B15.3 "build it now" >/dev/null 2>&1
+W4=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
+P4="$W4/proj"; mkdir -p "$P4"; ( cd "$P4" && git init -q ); CD4="$W4/proj-coord"; SY4="$W4/proj-SESSION-SYNC.md"
+( cd "$P4" && "$CC" send hub concord-w go --ref B15.3 "build it now" ) >/dev/null 2>&1
 if have '"kind":"go"' "$CD4/inbox/concord-w.jsonl" && have '"ref":"B15.3"' "$CD4/inbox/concord-w.jsonl" \
    && have '"from":"hub"' "$CD4/inbox/concord-w.jsonl"; then
   echo "✓ 1f: concord send → typed message (kind+ref+from) in inbox/<to>.jsonl"
@@ -63,10 +67,10 @@ rm -rf "$W4"
 
 # ── 2. live watch push ──
 W2=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
-CD2="$W2/coord"; SY2="$W2/SYNC.md"
+P2="$W2/proj"; mkdir -p "$P2"; ( cd "$P2" && git init -q ); CD2="$W2/proj-coord"; SY2="$W2/proj-SESSION-SYNC.md"
 mkdir -p "$CD2/sessions"; : > "$CD2/sessions/concord-w"
 printf '# prose channel\npreamble\n' > "$SY2"
-CONCORD_DIR="$CD2" CONCORD_SYNC="$SY2" "$DD" >"$W2/daemon.log" 2>&1 &
+( cd "$P2" && exec "$DD" ) >"$W2/daemon.log" 2>&1 &
 DPID=$!
 sleep 1.5
 printf '\n### hub → concord-w  (live go M2)\nlive-body\n' >> "$SY2"
@@ -85,21 +89,23 @@ rm -rf "$W2"
 # serialization point (atomic check-and-apply). Verify acquire / contended-HELD /
 # foreign-unlock-REFUSED / release, plus the Floor fallback when mediation is disabled.
 W3=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
-CD3="$W3/coord"; SY3="$W3/SYNC.md"; mkdir -p "$CD3"
-CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$CC" register a "sess a" >/dev/null
-CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$CC" register b "sess b" >/dev/null
-CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$DD" >"$W3/daemon.log" 2>&1 &
+P3="$W3/proj"; mkdir -p "$P3"; ( cd "$P3" && git init -q ); CD3="$W3/proj-coord"; SY3="$W3/proj-SESSION-SYNC.md"; mkdir -p "$CD3"
+( cd "$P3" && "$CC" register a "sess a" ) >/dev/null
+( cd "$P3" && "$CC" register b "sess b" ) >/dev/null
+( cd "$P3" && exec "$DD" ) >"$W3/daemon.log" 2>&1 &
 DPID3=$!
 # Wait for the socket to appear (daemon armed).
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$CD3/concordd.sock" ] && break; sleep 0.3; done
-run3() { CONCORD_DIR="$CD3" CONCORD_SYNC="$SY3" "$CC" "$@"; }
+run3() { ( cd "$P3" && "$CC" "$@" ); }
 # `&& e=0 || e=$?` keeps a non-zero exit (HELD/REFUSED=2) from tripping `set -e`.
 o1=$(run3 merge-lock a "merge #1") && e1=0 || e1=$?
 o2=$(run3 merge-lock b)           && e2=0 || e2=$?
 o3=$(run3 merge-unlock b)         && e3=0 || e3=$?
 o4=$(run3 merge-unlock a)         && e4=0 || e4=$?
-# Floor fallback path still works with mediation disabled.
-o5=$(CONCORD_NO_DAEMON=1 run3 merge-lock a "floor") && e5=0 || e5=$?
+# Floor fallback: disable daemon mediation via config (F-config — no NO_DAEMON env), so the
+# same op routes direct-to-FS. The daemon is still up; the CLIENT just won't mediate.
+printf '[daemon]\nenabled = false\n' > "$CD3/config.toml"
+o5=$(run3 merge-lock a "floor") && e5=0 || e5=$?
 kill "$DPID3" 2>/dev/null || true; wait "$DPID3" 2>/dev/null || true
 
 check3() { # "<label>" "<got>" <gotexit> "<want-substr>" <wantexit>
@@ -119,13 +125,13 @@ rm -rf "$W3"
 # With the daemon up, claim/release also route through its single-thread serialization
 # point. Verify mediated acquire / overlap-reject / foreign-release-refuse / release.
 W4m=$(mktemp -d "${TMPDIR:-/tmp}/concordd-e2e.XXXXXX")
-CD4m="$W4m/coord"; SY4m="$W4m/SYNC.md"; mkdir -p "$CD4m"
-CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$CC" register a "sess a" >/dev/null
-CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$CC" register b "sess b" >/dev/null
-CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$DD" >"$W4m/daemon.log" 2>&1 &
+P4m="$W4m/proj"; mkdir -p "$P4m"; ( cd "$P4m" && git init -q ); CD4m="$W4m/proj-coord"; SY4m="$W4m/proj-SESSION-SYNC.md"; mkdir -p "$CD4m"
+( cd "$P4m" && "$CC" register a "sess a" ) >/dev/null
+( cd "$P4m" && "$CC" register b "sess b" ) >/dev/null
+( cd "$P4m" && exec "$DD" ) >"$W4m/daemon.log" 2>&1 &
 DPID4=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$CD4m/concordd.sock" ] && break; sleep 0.3; done
-run4() { CONCORD_DIR="$CD4m" CONCORD_SYNC="$SY4m" "$CC" "$@"; }
+run4() { ( cd "$P4m" && "$CC" "$@" ); }
 m1=$(run4 claim a kernel/src/embedded "parent")            && f1=0 || f1=$?
 m2=$(run4 claim b kernel/src/embedded/usbd "child overlap") && f2=0 || f2=$?
 m3=$(run4 release b kernel/src/embedded "not mine")         && f3=0 || f3=$?

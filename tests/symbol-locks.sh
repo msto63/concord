@@ -33,9 +33,10 @@ class Server:
         pass
 PY
 fail=0
-# Run the tool with cwd = the project (so it derives proj/coord by convention) and a
-# cleared env (the incident lesson — no leaked CONCORD_DIR).
-run() { ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$BIN" "$@" ); }
+# Run the tool with cwd = the project, so it derives proj/coord purely by convention.
+# (F-config: the binary reads no location env, so there is nothing to leak or clear —
+# the incident vector is gone by construction.)
+run() { ( cd "$PROJ" && "$BIN" "$@" ); }
 chk() { if printf '%s' "$2" | grep -qF "$3"; then echo "✓ $1"; else echo "✗ $1 — want '$3' in: $2"; fail=1; fi; }
 chkx() { if [ "$2" = "$3" ]; then echo "✓ $1 (exit $2)"; else echo "✗ $1 — exit $2 != $3"; fail=1; fi; }
 # `&& rc=0 || rc=$?` keeps a non-zero exit (CONFLICT/OVERLAP=2) from tripping `set -e`.

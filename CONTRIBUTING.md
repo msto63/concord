@@ -6,9 +6,9 @@ filesystem, plus Claude Code hooks. Keep it that way.
 ## Principles
 
 - **No server, no database, no `jq`.** State is files. Reliability comes from simplicity.
-- **Project-agnostic.** Never hardcode a path. Read `CONCORD_DIR` / `CONCORD_SYNC` /
-  `CONCORD_PROJECT` from the environment, else derive `<repo>-coord` / `<repo>-SESSION-SYNC.md`
-  by convention.
+- **Project-agnostic, no ambient authority.** Never hardcode a path, and never read location
+  from the environment. Derive `<repo>-coord` / `<repo>-SESSION-SYNC.md` by convention from the
+  git toplevel; the only explicit overrides are the `--coord` / `--project` flags (see MANUAL §17).
 - **Docs in English, kept in sync.** A behavioural change updates `README.md` and `docs/MANUAL.md`
   in the same change.
 - **Dogfood.** Where practical, coordinate Concord's own development with Concord.

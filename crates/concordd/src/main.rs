@@ -48,13 +48,11 @@ mod telemetry;
 
 fn main() {
     let once = std::env::args().skip(1).any(|a| a == "--once");
-    // F-config bootstrap: env retired; coord resolves by convention, with a legacy env
-    // override honored-with-warning for one release (keeps existing daemon launches working).
-    let (overrides, warns) = concord_config::legacy_env_overrides();
-    for w in &warns {
-        eprintln!("{w}");
-    }
+    // F-config: no ambient location authority. The daemon's coord dir resolves purely by
+    // CONVENTION from its working directory (git-toplevel `<repo>-coord`) — launch it from
+    // the project root (the live fleet and the smokes both do).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let overrides = concord_core::paths::Overrides::default();
     let mut paths = Paths::resolve_with(&cwd, &overrides);
     let config = concord_config::load(&paths.coord);
     paths.ttl = config.leases.stale_ttl;

@@ -5,9 +5,9 @@
 # and that two projects are ISOLATED (no cross-talk) — the multi-project foundation
 # the dogfood (M5.2) builds on.
 #
-# NOTE: the environment is deliberately cleared (env -u CONCORD_*/AIS_*) — a set
-# CONCORD_DIR overrides the per-project convention (the lesson from the prep incident:
-# a leaked env var made a "temp" test write to the real ais-coord).
+# F-config: there is no location env at all — each project's coord derives purely from its
+# git toplevel by convention, so a "temp" test can no longer be redirected at the real
+# ais-coord by a leaked variable (the prep-incident vector is gone by construction).
 set -euo pipefail
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,9 +18,8 @@ BIN="${CONCORD_BIN:-$HERE/target/debug/concord}"
 W=$(mktemp -d "${TMPDIR:-/tmp}/concord-mp.XXXXXX"); trap 'rm -rf "$W"' EXIT
 fail=0
 
-# concord with a CLEAN env (no leaked coord-dir/sync/project overrides).
-cc() { env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT \
-           -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$BIN" "$@"; }
+# concord resolves each project by convention from cwd / --project; no env involved.
+cc() { "$BIN" "$@"; }
 
 mkdir -p "$W/projA" "$W/projB"
 ( cd "$W/projA" && git init -q )
@@ -31,9 +30,9 @@ cc init --project "$W/projA" --ids a,hub >/dev/null
 cc init --project "$W/projB" --ids x >/dev/null
 
 # Resolve each project's coord dir via `paths` (robust to realpath, e.g. /private/tmp).
-cdA=$( ( cd "$W/projA" && cc paths ) | sed -n 's/^CONCORD_DIR=//p')
-cdB=$( ( cd "$W/projB" && cc paths ) | sed -n 's/^CONCORD_DIR=//p')
-syA=$( ( cd "$W/projA" && cc paths ) | sed -n 's/^CONCORD_SYNC=//p')
+cdA=$( ( cd "$W/projA" && cc paths ) | sed -n 's/^COORD=//p')
+cdB=$( ( cd "$W/projB" && cc paths ) | sed -n 's/^COORD=//p')
+syA=$( ( cd "$W/projA" && cc paths ) | sed -n 's/^SYNC=//p')
 
 # 1) per-project derivation: distinct coord dirs ending in <repo>-coord.
 if [ -n "$cdA" ] && [ -n "$cdB" ] && [ "$cdA" != "$cdB" ] \
@@ -56,9 +55,9 @@ if [ -f "$syA" ] && grep -q "Concord prose channel" "$syA"; then
   echo "✓ init scaffolded the prose channel (<repo>-SESSION-SYNC.md) with a header"
 else echo "✗ sync channel missing/empty: $syA"; fail=1; fi
 
-# 5) `eval "$(concord paths)"` yields a usable env for scripts/hooks.
-ev=$( cd "$W/projA" && eval "$(cc paths)" && printf '%s' "$CONCORD_DIR" )
-if [ "$ev" = "$cdA" ]; then echo "✓ eval \"\$(concord paths)\" sets a usable CONCORD_DIR"; else echo "✗ eval paths broken"; fail=1; fi
+# 5) `eval "$(concord paths)"` yields usable local path vars for scripts.
+ev=$( cd "$W/projA" && eval "$(cc paths)" && printf '%s' "$COORD" )
+if [ "$ev" = "$cdA" ]; then echo "✓ eval \"\$(concord paths)\" sets a usable \$COORD"; else echo "✗ eval paths broken"; fail=1; fi
 
 # 6) idempotent: re-init does not error or clobber.
 cc init --project "$W/projA" --ids a,hub >/dev/null && echo "✓ init is idempotent (re-run ok)" || { echo "✗ re-init failed"; fail=1; }

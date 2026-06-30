@@ -11,6 +11,32 @@ for the enforced release process.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-30
+
+### Changed (breaking)
+- **F-config completed — no ambient location authority.** All legacy `CONCORD_*` / `AIS_*`
+  *location* environment variables (`CONCORD_DIR`, `CONCORD_SYNC`, `CONCORD_PROJECT`, and the
+  `AIS_COORD_DIR` / `AIS_SYNC_FILE` / `AIS_PROJECT_DIR` aliases) are **removed** — the binary,
+  daemon, and hooks no longer read them. The coordination dir and prose channel resolve purely
+  by convention (`<repo>-coord` / `<repo>-SESSION-SYNC.md` siblings of the git toplevel),
+  overridable only by the explicit `--coord` / `--project` flags or the user-global `[projects]`
+  map. This eliminates the leaked-variable incident class by construction. See MANUAL §17.
+- **`concord paths`** now prints neutral, eval-able `COORD=` / `SYNC=` / `PROJECT=` assignments
+  (previously `CONCORD_DIR=` …), since those names no longer configure anything.
+
+### Identity (explicit overrides retained)
+- `CONCORD_ID` and `CONCORD_BIN` survive as the only two environment variables — both **explicit,
+  deliberate launch knobs**, not ambient authority. `CONCORD_ID` declares which logical session a
+  process is (needed when several sessions share one checkout); `CONCORD_BIN` points the hooks at a
+  specific binary. `CONCORD_ID` is transitional — capability-bound cryptographic identity (roadmap
+  C1) will supersede it.
+
+### Migration
+- Replace any `CONCORD_DIR=… concord …` with `concord --coord … …` (or just run from the project,
+  letting convention resolve it). Drop `CONCORD_SYNC` / `CONCORD_PROJECT` / `AIS_*` entirely.
+- Hook installs are unaffected — re-run `concord install-hooks` after upgrading; the materialized
+  hooks resolve everything by convention.
+
 ## [0.11.4] - 2026-06-30
 
 ### Added

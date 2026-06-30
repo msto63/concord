@@ -15,10 +15,14 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/concord-f1.XXXXXX"); trap 'rm -rf "$W"' EXIT
 PROJ="$W/proj"; mkdir -p "$PROJ/src"; ( cd "$PROJ" && git init -q )
 COORD="$W/proj-coord"; SYNC="$W/proj-SESSION-SYNC.md"
 fail=0
-R() { ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$BIN" "$@" ); }
-# Run a hook as session $1 with stdin from $2-payload; cwd = PROJ, explicit env.
-hook() { ( cd "$PROJ" && env -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR \
-          CONCORD_ID="$1" CONCORD_DIR="$COORD" CONCORD_SYNC="$SYNC" CONCORD_BIN="$BIN" bash "$HERE/hooks/$2" ); }
+# F-config: hooks derive COORD/SYNC purely from their own location (<coord>/hooks/). So
+# materialize them into the scratch coord — exactly as `install-hooks` does — and invoke
+# THOSE copies: _libdir=$COORD/hooks ⇒ COORD=$COORD, SYNC=$W/proj-SESSION-SYNC.md by
+# convention. Identity is still the explicit CONCORD_ID override (a per-call launch knob).
+mkdir -p "$COORD/hooks"; cp "$HERE"/hooks/*.sh "$COORD/hooks/"
+R() { ( cd "$PROJ" && "$BIN" "$@" ); }
+# Run a hook as session $1 with stdin from $2-payload; cwd = PROJ; explicit id override only.
+hook() { ( cd "$PROJ" && env CONCORD_ID="$1" CONCORD_BIN="$BIN" bash "$COORD/hooks/$2" ); }
 ok() { echo "✓ $1"; }; no() { echo "✗ $1"; fail=1; }
 
 R init --ids a,b >/dev/null
@@ -35,7 +39,7 @@ out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/x.rs"}}' "$P
 # fail-open: NO concord available at all → allow. A minimal PATH (/usr/bin:/bin) keeps
 # git/python3/perl but excludes any globally-installed `concord` (the new PATH fallback in
 # lib.sh) so this genuinely exercises the no-binary case on any machine.
-out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/x.rs"}}' "$PROJ" | ( cd "$PROJ" && env -i PATH=/usr/bin:/bin CONCORD_ID=b CONCORD_DIR="$COORD" CONCORD_BIN=/nonexistent bash "$HERE/hooks/pre-tool.sh" ))
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/x.rs"}}' "$PROJ" | ( cd "$PROJ" && env -i PATH=/usr/bin:/bin CONCORD_ID=b CONCORD_BIN=/nonexistent bash "$COORD/hooks/pre-tool.sh" ))
 [ -z "$out" ] && ok "A1: fail-open when no concord is available" || no "A1 should fail-open (got: $out)"
 
 # ── A6: PostToolUse out-of-scope-write audit (log, no block) ──

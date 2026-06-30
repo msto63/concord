@@ -44,7 +44,7 @@ TOML
 # Start the daemon in the project (convention coord = $COORD). `exec` makes the subshell
 # BECOME the daemon, so $! is the real concordd pid (a plain `( … ) &` may fork, leaving a
 # stray daemon the trap can't kill).
-( cd "$PROJ" && exec env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$DAEMON" ) >/dev/null 2>&1 &
+( cd "$PROJ" && exec "$DAEMON" ) >/dev/null 2>&1 &
 DPID=$!
 
 # Wait for the receiver to bind (poll the port; no fixed sleep).
@@ -75,7 +75,7 @@ post "$burn_body"
 post "$reject_body"
 post "$idle_body"
 
-st() { ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$BIN" status 2>/dev/null ); }
+st() { ( cd "$PROJ" && "$BIN" status 2>/dev/null ); }
 # Poll the health surface (robust against any flush/scheduling lag).
 want() {  # <id> <FLAG>
   for _ in $(seq 1 25); do

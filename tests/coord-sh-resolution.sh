@@ -14,15 +14,20 @@ fail=0
 W=$(mktemp -d "${TMPDIR:-/tmp}/concord-csr.XXXXXX"); trap 'rm -rf "$W"' EXIT
 ok() { echo "✓ $1"; }; no() { echo "✗ $1"; fail=1; }
 
-# Resolve COORD_SH by sourcing lib.sh with a controlled PROJECT/COORD and PATH. Returns the
+# F-config: lib.sh derives COORD/PROJECT purely from its OWN location (<coord>/hooks/),
+# never from env. So materialize it into a scratch coord — exactly as `install-hooks` does —
+# and source THAT copy: _libdir=$W/proj-coord/hooks ⇒ COORD=$W/proj-coord ⇒ PROJECT=$W/proj.
+mkdir -p "$W/proj" "$W/proj-coord/hooks"
+cp "$LIB" "$W/proj-coord/hooks/lib.sh"
+LIBC="$W/proj-coord/hooks/lib.sh"
+
+# Resolve COORD_SH by sourcing the materialized lib.sh with a controlled PATH. Returns the
 # resolved COORD_SH. The PROJECT has no target/ build unless we create one.
 resolve() {  # <PATH> [extra env assignments…]
   local p="$1"; shift
-  env -i PATH="$p" HOME="$W" CONCORD_DIR="$W/proj-coord" CONCORD_PROJECT="$W/proj" "$@" \
-    bash -c '. "'"$LIB"'" 2>/dev/null; printf "%s" "$COORD_SH"'
+  env -i PATH="$p" HOME="$W" "$@" \
+    bash -c '. "'"$LIBC"'" 2>/dev/null; printf "%s" "$COORD_SH"'
 }
-
-mkdir -p "$W/proj"
 # A fake global `concord` on PATH.
 mkdir -p "$W/gbin"; printf '#!/bin/sh\nexit 0\n' > "$W/gbin/concord"; chmod +x "$W/gbin/concord"
 
@@ -34,10 +39,11 @@ out=$(resolve "/usr/bin:/bin")
 out=$(resolve "$W/gbin:/usr/bin:/bin")
 [ "$out" = "$W/gbin/concord" ] && ok "no build + global concord on PATH → global concord" || no "expected global, got: $out"
 
-# 3. Project-local build wins over the global concord.
+# 3. Project-local build wins over the global concord. (lib.sh resolves PROJECT via `cd -P`,
+# which canonicalizes /var → /private/var on macOS, so match the suffix, not the full prefix.)
 mkdir -p "$W/proj/target/release"; printf '#!/bin/sh\nexit 0\n' > "$W/proj/target/release/concord"; chmod +x "$W/proj/target/release/concord"
 out=$(resolve "$W/gbin:/usr/bin:/bin")
-[ "$out" = "$W/proj/target/release/concord" ] && ok "project-local build > global concord" || no "expected local build, got: $out"
+case "$out" in */proj/target/release/concord) ok "project-local build > global concord";; *) no "expected local build, got: $out";; esac
 
 # 4. $CONCORD_BIN wins over everything.
 out=$(resolve "$W/gbin:/usr/bin:/bin" CONCORD_BIN="$W/gbin/concord")

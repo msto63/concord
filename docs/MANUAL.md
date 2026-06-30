@@ -82,10 +82,13 @@ Tasks, priorities, and ordering flow **human → hub → sessions**. This is del
 A session's **id** (e.g. `a`, `hub`) comes from the **worktree** it runs in. `concord start <id>`
 runs the session in the `<repo>-<id>` worktree and writes an id-bind marker so the hooks know which
 session they are; with no marker the hooks fall back to the worktree-name convention (`<repo>-<id>`
-→ the `<id>` suffix). No environment variable is needed.
+→ the `<id>` suffix). In the normal one-session-per-worktree topology no environment variable is
+needed.
 
-> *Deprecated:* a legacy `CONCORD_ID` environment variable is still honored with a deprecation
-> warning for one release, then removed.
+> When several sessions share **one** checkout (e.g. the self-hosting dogfood fleet), the worktree
+> can't tell them apart — there each session declares itself with the explicit `CONCORD_ID` launch
+> override (`CONCORD_ID=hub claude …`). This is a deliberate, presented identity, not ambient
+> authority; see the design decision in §17.
 
 ## 5. The lifecycle
 
@@ -264,16 +267,28 @@ projects whose coord dir is not the conventional `<repo>-coord` sibling.
 ### Bootstrap (the two values config cannot define)
 
 A config file lives *inside* a coordination dir, so two values are resolved before it is
-read — by **convention**, with flags to override:
+read — by **convention**, with explicit overrides. There is **no ambient location
+authority**: the environment never silently redirects where coordination state lives.
 
 - **Coordination dir / channel** — the `<repo>-coord/` and `<repo>-SESSION-SYNC.md` siblings
   of the git toplevel; override with `--coord <dir>` or the user-global `[projects]` map.
-- **Session id** — the worktree name `<repo>-<id>`; override with `--id <id>`. `concord start`
-  also writes an id-bind marker so the hooks need no environment variable.
+- **Session id** — resolved, in order, from: the explicit `$CONCORD_ID` launch override
+  (`CONCORD_ID=hub claude …`); an id-bind marker written by `concord start` (keyed by the
+  worktree); or the worktree name `<repo>-<id>`. Override a one-off with `--id <id>`.
 
-> **Deprecated:** the old `CONCORD_*` / `AIS_*` environment variables are retired. A still-set
-> one is honored for one release **with a deprecation warning**, then removed; use `config.toml`,
-> the convention, or `--coord`/`--id`/`--project` instead.
+### Explicit overrides (the only two environment variables)
+
+Location is never read from the environment (F-config). Exactly two variables remain — both
+**explicit, deliberate launch knobs**, not ambient authority:
+
+| Variable | Purpose |
+|---|---|
+| `CONCORD_ID` | Declare *which logical session* this process is. Required when several sessions share one checkout — convention and the id-bind marker both key off the worktree, so they cannot tell two sessions in one working tree apart. |
+| `CONCORD_BIN` | Point the hooks at a specific `concord` binary (e.g. a fresh local build), overriding PATH discovery. |
+
+> Identity via `CONCORD_ID` is a declaration-only, transitional mechanism. The durable
+> identity hardening is cryptographic — capability-bound session identity (on the roadmap) —
+> which will supersede it. See *Design decision: no ambient location authority* (§17).
 
 ## 12. The automation layer (Claude Code hooks)
 
@@ -367,3 +382,51 @@ To *see* the enforced behavior yourself, set up a throwaway repo with two sessio
 | two sessions both take `merge-lock` | only the **first** holds it; the second is told who holds it |
 | `a` holds a lease, goes stale, `b` reclaims, then `a` releases with its old fence | `a` is **refused** — no split-brain (see `tests/fencing-smoke.sh`) |
 | feed telemetry for an idle / high-burn / reject-storm session | `concord status` flags it **IDLE / BURN / REJECT**, and the watchdog escalates a dark session (see `tests/telemetry-smoke.sh`) |
+
+## 17. Design decision: no ambient location authority
+
+This records the design decision behind F-config (the full retirement of the legacy
+`CONCORD_*` / `AIS_*` environment variables), so the rationale stays findable.
+
+- **Status:** Accepted (2026-06)
+- **Refs:** §11 (Configuration), `crates/concord-config`, `hooks/lib.sh`
+
+### Context
+
+Coordination state has to be *located* (which coord dir, which prose channel) and each
+session has to be *identified* (which logical session am I). Historically both came from
+environment variables (`CONCORD_DIR`/`CONCORD_SYNC`/`CONCORD_PROJECT`, plus `AIS_*`
+aliases, and `CONCORD_ID`). Environment-as-location is **ambient authority**: a value
+silently inherited from the surrounding shell decides where a process reads and writes —
+which is exactly how a leaked variable once made a "temporary" test write into a live
+coordination dir. The guiding invariant is *no ambient authority*: a process must not gain
+location or identity it did not explicitly present.
+
+### Decision
+
+Remove **all ambient location authority**. The coordination dir and prose channel resolve
+purely by **convention** (the `<repo>-coord` / `<repo>-SESSION-SYNC.md` siblings of the git
+toplevel), overridable only by the explicit `--coord` / `--project` flags or the
+user-global `[projects]` map. No environment variable names a location any more.
+
+Identity is kept as an **explicit declaration**, not removed: `CONCORD_ID` survives as an
+explicit launch override (the peer of `CONCORD_BIN`), because it is the only mechanism that
+distinguishes several logical sessions that **share one checkout** — convention and the
+id-bind marker both key off the worktree and cannot tell them apart.
+
+**Rejected — full removal of `CONCORD_ID` (option A).** It would force a one-session-per-
+worktree topology with **no enforcement gain** (leases, fencing, and the merge lock are all
+identity-mechanism-agnostic) while breaking the live multi-session dogfood fleet. An
+explicit, deliberately-set launch variable is not ambient authority — it is a presented
+credential, structurally identical to `CONCORD_BIN`. The vision-true line is therefore: kill
+ambient *location*, keep explicit *identity declaration*.
+
+### Consequences
+
+- The leaked-env incident class is gone **by construction**: no binary, hook, or test reads
+  a location variable, so nothing ambient can redirect coordination state.
+- Tests resolve scratch state by convention (run from a throwaway project) or `--coord`;
+  hook tests materialize the hooks into a scratch coord, exactly as `install-hooks` does.
+- **Forward path:** `CONCORD_ID` is transitional. The durable identity hardening is
+  cryptographic — capability-bound session identity (roadmap item C1) — which will supersede
+  the `CONCORD_ID` declaration entirely.

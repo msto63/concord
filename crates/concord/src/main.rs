@@ -66,14 +66,12 @@ fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // F-config bootstrap: env is retired. The coord dir / project root resolve by
-    // CONVENTION (git-toplevel `<repo>-coord`), with precedence: --coord flag > legacy env
-    // (deprecated, honored-with-warning to keep existing setups working) > the user-global
-    // `[projects]` map > convention. Everything else lives in `config.toml`.
-    let (mut overrides, warns) = concord_config::legacy_env_overrides();
-    for w in &warns {
-        eprintln!("{w}");
-    }
+    // F-config: there is no ambient location authority — the coord dir / project root
+    // resolve by CONVENTION (git-toplevel `<repo>-coord`), with precedence: --coord flag >
+    // the user-global `[projects]` map > convention. Everything else lives in `config.toml`.
+    // (Identity is the one explicit launch override — `--id` here, `$CONCORD_ID` in the
+    // hooks — never inherited ambiently from the location environment.)
+    let mut overrides = concord_core::paths::Overrides::default();
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let top = concord_core::paths::git_toplevel(&cwd).unwrap_or_else(|| cwd.clone());
     if overrides.coord.is_none() {
@@ -202,13 +200,15 @@ fn run(args: &[String]) -> Result<ExitCode> {
         }
 
         "paths" => {
-            // Emit the resolved coordination paths as eval-able shell assignments —
-            // `eval "$(concord paths)"` gives a script/hook the right env for THIS
-            // project (multi-project single-source-of-truth, M5).
+            // Emit the resolved coordination paths as eval-able shell assignments for THIS
+            // project: `eval "$(concord paths)"` gives a script the locations as plain
+            // local vars ($COORD/$SYNC/$PROJECT). These are read-outs, not configuration —
+            // the binary and hooks resolve location purely by convention (F-config), so
+            // there is no env var to set; this just reports where convention landed.
             let p = store.paths();
-            println!("CONCORD_DIR={}", p.coord.display());
-            println!("CONCORD_SYNC={}", p.sync.display());
-            println!("CONCORD_PROJECT={}", p.project.display());
+            println!("COORD={}", p.coord.display());
+            println!("SYNC={}", p.sync.display());
+            println!("PROJECT={}", p.project.display());
             Ok(ExitCode::SUCCESS)
         }
 
@@ -894,7 +894,7 @@ fn print_usage() {
 Concord — multi-session coordination (Rust port of bin/coord.sh).
 
   concord init [--project <path>] [--ids a,b,c] # bootstrap a project's coordination state
-  concord paths                                 # print resolved CONCORD_DIR/SYNC/PROJECT (eval-able)
+  concord paths                                 # print resolved COORD/SYNC/PROJECT paths (eval-able)
   concord start <id> [--print]                  # launch a session in this terminal (--print = dry-run)
   concord dash                                  # live overview: status + last prose post per session
   concord pause <id> | resume <id>              # set/clear a session's pause flag
@@ -977,8 +977,8 @@ fn symbol_claim_advisories(store: &Store, area: &str, claimer: &str) {
 /// Try to route a consequential request through the daemon (Strong tier). Returns
 /// `Some(response)` when the daemon is reachable and answered with a usable verdict;
 /// `None` when there is no daemon, the connection failed, or it returned an error — in
-/// all of which the caller falls back to the Floor (direct FS). `CONCORD_NO_DAEMON=1`
-/// forces the Floor unconditionally.
+/// all of which the caller falls back to the Floor (direct FS). Set `[daemon] enabled =
+/// false` in config to force the Floor unconditionally (no daemon mediation).
 fn mediate(daemon_enabled: bool, store: &Store, req: Request) -> Option<Response> {
     if !daemon_enabled {
         return None;

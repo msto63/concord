@@ -18,7 +18,7 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/concord-fence.XXXXXX"); trap 'rm -rf "$W"' EXIT
 PROJ="$W/proj"; mkdir -p "$PROJ"; ( cd "$PROJ" && git init -q )
 COORD="$W/proj-coord"
 fail=0
-R() { ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$BIN" "$@" ); }
+R() { ( cd "$PROJ" && "$BIN" "$@" ); }
 chk() { if printf '%s' "$2" | grep -qF "$3"; then echo "✓ $1"; else echo "✗ $1 — want '$3' in: $2"; fail=1; fi; }
 chkx() { if [ "$2" = "$3" ]; then echo "✓ $1 (exit $2)"; else echo "✗ $1 — exit $2 != $3"; fail=1; fi; }
 
