@@ -245,6 +245,7 @@ the coordinator's name, telemetry thresholds, ports, …).
 |---|---|
 | **[docs/MANUAL.md](docs/MANUAL.md)** | Full reference: the model, every command, the hooks, configuration, and ready-made prompts. |
 | **[docs/QUICKSTART.md](docs/QUICKSTART.md)** | A short, worked setup. |
+| **[RELEASE-NOTES.md](RELEASE-NOTES.md)** | Narrative highlights of each release (the [CHANGELOG](CHANGELOG.md) is the per-release detail record). |
 
 ## Status
 
