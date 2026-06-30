@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 
 use concord_core::config::Config;
 use concord_core::escalation::Severity;
-use concord_core::paths::Overrides;
 use concord_core::store::OverlapPolicy;
 use serde::Deserialize;
 
@@ -203,33 +202,6 @@ pub fn projects_map() -> HashMap<String, String> {
         .and_then(|p| read_raw(&p))
         .map(|r| r.projects)
         .unwrap_or_default()
-}
-
-/// Detect retired environment variables (F-config). Returns the bootstrap [`Overrides`]
-/// they imply plus a deprecation warning per variable seen. Env is **honored for one
-/// release** so the live self-hosting keeps working; full removal follows once all
-/// callers use config/flags/convention.
-pub fn legacy_env_overrides() -> (Overrides, Vec<String>) {
-    let mut ov = Overrides::default();
-    let mut warns = Vec::new();
-    let mut take = |names: &[&str], slot: &mut Option<PathBuf>, what: &str| {
-        for n in names {
-            if let Ok(v) = std::env::var(n) {
-                if !v.is_empty() {
-                    warns.push(format!(
-                        "concord: warning: ${n} is deprecated (F-config) — use {what}; honored for now, removed next release"
-                    ));
-                    if slot.is_none() {
-                        *slot = Some(PathBuf::from(v));
-                    }
-                }
-            }
-        }
-    };
-    take(&["CONCORD_DIR", "AIS_COORD_DIR"], &mut ov.coord, "--coord or the <repo>-coord convention");
-    take(&["CONCORD_SYNC", "AIS_SYNC_FILE"], &mut ov.sync, "the <repo>-SESSION-SYNC.md convention");
-    take(&["CONCORD_PROJECT", "AIS_PROJECT_DIR"], &mut ov.project, "--project or the git toplevel");
-    (ov, warns)
 }
 
 #[cfg(test)]

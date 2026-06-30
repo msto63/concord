@@ -12,9 +12,9 @@ use crate::store::OverlapPolicy;
 /// `[leases]`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeasesConfig {
-    /// Seconds with no heartbeat before a session is stale (was `AIS_COORD_TTL`).
+    /// Seconds with no heartbeat before a session is stale.
     pub stale_ttl: u64,
-    /// Claim overlap policy (was `CONCORD_STRICT_OVERLAP`).
+    /// Claim overlap policy.
     pub overlap_policy: OverlapPolicy,
     /// P1 capability-strict edit guard (folds in the `<coord>/strict-leases` marker).
     pub strict: bool,
@@ -23,14 +23,14 @@ pub struct LeasesConfig {
 /// `[daemon]`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonConfig {
-    /// Whether the CLI routes consequential ops through the daemon (was `CONCORD_NO_DAEMON`).
+    /// Whether the CLI routes consequential ops through the daemon.
     pub enabled: bool,
 }
 
 /// `[launcher]`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherConfig {
-    /// Extra flags passed to `claude` at launch (was `CONCORD_CLAUDE_FLAGS`).
+    /// Extra flags passed to `claude` at launch.
     pub claude_flags: String,
     /// Worktree naming convention; `{repo}`/`{id}` are substituted.
     pub worktree_pattern: String,
@@ -39,11 +39,11 @@ pub struct LauncherConfig {
 /// `[escalation]`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EscalationConfig {
-    /// The default escalation target (was `CONCORD_COORDINATOR_ID` / `<coord>/coordinator`).
+    /// The default escalation target.
     pub coordinator: String,
-    /// Seconds before an un-ACK'd directive is re-delivered (was `TTL_ACK`).
+    /// Seconds before an un-ACK'd directive is re-delivered.
     pub ack_ttl: u64,
-    /// Re-deliveries before auto-escalation (was `K_REDELIVER`).
+    /// Re-deliveries before auto-escalation.
     pub redeliver_max: u32,
     /// Severity of an auto-escalation.
     pub auto_severity: Severity,

@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # Concord hook common library. Sourced by the hook scripts. EVERYTHING here is
 # fail-open: any error must leave the session working normally.
-# Paths are DERIVED, not wired. This library lives in <coord>/hooks/, so the
-# coordination dir is its parent; the project repo + prose channel follow the
-# project-agnostic naming convention (<repo>-coord, <repo>-SESSION-SYNC.md, both
-# siblings of <repo>). Env (exported by `concord` at launch) wins; the location
-# derivation is the fallback for sessions not launched via concord.
+# Paths are DERIVED by convention, never from the environment (F-config — there is no
+# ambient location authority). This library lives in <coord>/hooks/, so the coordination
+# dir is its parent; the project repo + prose channel follow the project-agnostic naming
+# convention (<repo>-coord, <repo>-SESSION-SYNC.md, both siblings of <repo>).
 _libdir="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
-COORD="${CONCORD_DIR:-${AIS_COORD_DIR:-$(dirname "$_libdir")}}"
+COORD="$(dirname "$_libdir")"
 HOOKS="$COORD/hooks"
-PROJECT="${CONCORD_PROJECT:-${AIS_PROJECT_DIR:-${COORD%-coord}}}"
-SYNC="${CONCORD_SYNC:-${AIS_SYNC_FILE:-${COORD%-coord}-SESSION-SYNC.md}}"
+PROJECT="${COORD%-coord}"
+SYNC="${COORD%-coord}-SESSION-SYNC.md"
 # The coordination CLI the hooks drive. Resolution order:
 #   1. $CONCORD_BIN              — an explicit override.
 #   2. the PROJECT's own target/ build — a checked-out concord repo uses its fresh build.
@@ -27,16 +26,17 @@ for c in "${CONCORD_BIN:-}" \
   [ -n "$c" ] && [ -x "$c" ] && { COORD_SH="$c"; break; }
 done
 
-# Print the Concord session-id. Source of truth = the CONCORD_ID env var, set when
-# the session is launched (`CONCORD_ID=E claude …`). This is robust: it does NOT
-# depend on the working directory (all sessions here run from the main repo, so the
-# cwd does NOT identify the logical session). Empty if unset → hooks no-op (never
-# guess a wrong id). Optional fallback file lets a running session self-declare.
+# Print the Concord session-id. Identity is an EXPLICIT declaration — never inherited
+# ambiently from the location environment. Resolution order (all three explicit/structural):
+#   1. $CONCORD_ID — the explicit launch override (`CONCORD_ID=hub claude …`), the peer of
+#      $CONCORD_BIN. This is how a session that shares ONE checkout with others (the dogfood
+#      fleet, all running from the main repo) names itself: convention/marker key off the
+#      worktree, so they cannot tell two sessions in one worktree apart — only this can.
+#   2. idbind marker keyed by the worktree (git toplevel), written by `concord start` — the
+#      normal one-session-per-worktree topology needs no env at all.
+#   3. convention: the worktree basename `<repo>-<id>` → the `<id>` suffix.
+# Empty if none resolve → hooks no-op (never guess a wrong id).
 concord_id() {
-  # F-config: env is retired (convention-first). Resolution order:
-  #  1. $CONCORD_ID — legacy, honored for continuity (deprecated; removed next release).
-  #  2. idbind marker keyed by the worktree (git toplevel), written by `concord start`.
-  #  3. convention: the worktree basename `<repo>-<id>` → the `<id>` suffix.
   if [ -n "${CONCORD_ID:-}" ]; then printf '%s' "$CONCORD_ID"; return 0; fi
   local top mk
   top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)

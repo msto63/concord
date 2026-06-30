@@ -12,7 +12,7 @@ BIN="${CONCORD_BIN:-$HERE/target/debug/concord}"
 W=$(mktemp -d "${TMPDIR:-/tmp}/concord-launch.XXXXXX"); trap 'rm -rf "$W" "$W/myproj-a"' EXIT
 PROJ="$W/myproj"; mkdir -p "$PROJ" "$PROJ-a"; ( cd "$PROJ" && git init -q )
 fail=0
-cx() { env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR "$BIN" "$@"; }
+cx() { "$BIN" "$@"; }
 chk() { if printf '%s' "$2" | grep -qF "$3"; then echo "✓ $1"; else echo "✗ $1 — missing '$3' in: $2"; fail=1; fi; }
 
 cx init --project "$PROJ" --ids hub,a >/dev/null

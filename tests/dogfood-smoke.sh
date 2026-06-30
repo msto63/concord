@@ -13,12 +13,14 @@ BIN="${CONCORD_BIN:-$HERE/target/debug/concord}"
 [ -x "$BIN" ] || { echo "FATAL: concord not built at $BIN"; exit 1; }
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/concord-dogfood.XXXXXX"); trap 'rm -rf "$W"' EXIT
-CD="$W/coord"; SY="$W/SYNC.md"
+PROJ="$W/proj"; mkdir -p "$PROJ"; ( cd "$PROJ" && git init -q )
+CD="$W/proj-coord"; SY="$W/proj-SESSION-SYNC.md"
 fail=0
 
-# Drive the Rust tool against an ISOLATED coord dir (explicit, env otherwise cleared).
-cc() { env -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR -u CONCORD_PROJECT \
-           CONCORD_DIR="$CD" CONCORD_SYNC="$SY" "$BIN" "$@"; }
+# Drive the Rust tool from inside an ISOLATED throwaway project: its coord dir and prose
+# channel resolve by CONVENTION ($PROJ-coord, $PROJ-SESSION-SYNC.md), never the live
+# ais-coord. F-config removes location env, so there is nothing ambient to leak.
+cc() { ( cd "$PROJ" && "$BIN" "$@" ); }
 chk() { # "<label>" "<got>" <gotrc> "<want-substr>" <wantrc>
   if printf '%s' "$2" | grep -qF "$4" && [ "$3" = "$5" ]; then echo "✓ $1";
   else echo "✗ $1 — got [$2] rc=$3 (want '$4' rc=$5)"; fail=1; fi
@@ -44,9 +46,8 @@ grep -q "### a → hub" "$SY" && echo "✓ prose channel (isolated) carries the 
 st=$(cc status 2>&1)
 printf '%s' "$st" | grep -q "user_usbd" && printf '%s' "$st" | grep -q " by b " && echo "✓ status shows b's surviving lease" || { echo "✗ status wrong"; fail=1; }
 
-# Isolation guarantee: nothing leaked into the real ais-coord.
-[ ! -e "$HERE/../ais-coord/sessions/a" ] || true   # (informational; real ais-coord is elsewhere)
-echo "  ℹ all state under $CD (isolated); ais-coord untouched (env cleared, explicit CONCORD_DIR)"
+# Isolation guarantee: all state lives under the throwaway project's convention paths.
+echo "  ℹ all state under $CD (isolated by convention); the live ais-coord is untouched"
 
 echo ""
 if [ "$fail" = 0 ]; then echo "DOGFOOD SMOKE: ALL PASS — Rust tool coordinates a multi-session scenario, isolated"; else echo "DOGFOOD SMOKE: FAILURES"; fi

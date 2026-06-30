@@ -16,9 +16,8 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/concord-ih.XXXXXX"); trap 'rm -rf "$W"' EXIT
 PROJ="$W/proj"; mkdir -p "$PROJ"; ( cd "$PROJ" && git init -q )
 COORD="$W/proj-coord"
 fail=0
-# cwd = project (convention-derive), cleared env, FAKE HOME for the settings wiring.
-run() { ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT \
-          -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR HOME="$W/home" "$BIN" "$@" ); }
+# cwd = project (convention-derive), FAKE HOME for the settings wiring (no location env to clear).
+run() { ( cd "$PROJ" && env HOME="$W/home" "$BIN" "$@" ); }
 chk() { if printf '%s' "$2" | grep -qF "$3"; then echo "✓ $1"; else echo "✗ $1 — want '$3' in: $2"; fail=1; fi; }
 
 mkdir -p "$W/home/.claude"
@@ -62,7 +61,7 @@ fi
 
 # --no-wire leaves settings untouched: re-point HOME to a fresh dir and verify no write.
 mkdir -p "$W/home2/.claude"; echo '{"k":1}' > "$W/home2/.claude/settings.json"
-o=$( cd "$PROJ" && env -u CONCORD_DIR HOME="$W/home2" "$BIN" install-hooks --no-wire ) && rc=0 || rc=$?
+o=$( cd "$PROJ" && env HOME="$W/home2" "$BIN" install-hooks --no-wire ) && rc=0 || rc=$?
 chk "--no-wire reports skip" "$o" "no-wire"
 [ "$(cat "$W/home2/.claude/settings.json")" = '{"k":1}' ] && echo "✓ --no-wire left settings.json untouched" || { echo "✗ --no-wire mutated settings"; fail=1; }
 

@@ -4,7 +4,7 @@
 . "$(dirname "$0")/lib.sh" 2>/dev/null || { printf 'concord'; exit 0; }
 cat >/dev/null 2>&1   # drain stdin
 id=$(concord_id)
-[ -z "$id" ] && { printf '○ concord (CONCORD_ID nicht gesetzt)'; exit 0; }
+[ -z "$id" ] && { printf '○ concord (no session id — set $CONCORD_ID, an idbind marker, or use a <repo>-<id> worktree)'; exit 0; }
 
 col=$(concord_colour "$id")
 focus=$(concord_field "$id" focus); [ -z "$focus" ] && focus="(idle)"

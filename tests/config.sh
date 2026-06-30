@@ -15,8 +15,9 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/concord-cfg.XXXXXX"); trap 'rm -rf "$W"' EXIT
 PROJ="$W/proj"; mkdir -p "$PROJ/src"; ( cd "$PROJ" && git init -q )
 COORD="$W/proj-coord"
 fail=0
-# Clean env (no leaked legacy vars) + a controlled HOME so the user-global config is absent.
-R() { ( cd "$PROJ" && env -u CONCORD_DIR -u CONCORD_SYNC -u CONCORD_PROJECT -u AIS_COORD_DIR -u AIS_SYNC_FILE -u AIS_PROJECT_DIR HOME="$W/home" "$BIN" "$@" ); }
+# cwd = project (convention-derive) + a controlled HOME so the user-global config is absent.
+# (F-config: the binary reads no location env, so there is nothing to leak or clear.)
+R() { ( cd "$PROJ" && env HOME="$W/home" "$BIN" "$@" ); }
 chk() { if printf '%s' "$2" | grep -qF "$3"; then echo "✓ $1"; else echo "✗ $1 — want '$3' in: $2"; fail=1; fi; }
 chkx() { if [ "$2" = "$3" ]; then echo "✓ $1 (exit $2)"; else echo "✗ $1 — exit $2 != $3"; fail=1; fi; }
 
@@ -46,14 +47,17 @@ printf 'this is [[[ not toml = =\n' > "$COORD/config.toml"
 o=$(R status 2>&1) && rc=0 || rc=$?; chk "malformed config warns" "$o" "ignoring malformed"; chkx "malformed config does not crash" "$rc" 0
 printf '' > "$COORD/config.toml"
 
-# --coord bootstrap: resolve a coord dir explicitly (no env, run from an unrelated cwd).
-o=$( cd "$W" && env -u CONCORD_DIR HOME="$W/home" "$BIN" --coord "$COORD" status 2>&1 ); chk "--coord bootstrap resolves the coord" "$o" "$COORD"
+# --coord bootstrap: resolve a coord dir explicitly, run from an unrelated cwd.
+o=$( cd "$W" && env HOME="$W/home" "$BIN" --coord "$COORD" status 2>&1 ); chk "--coord bootstrap resolves the coord" "$o" "$COORD"
 
-# Legacy env: honored WITH a deprecation warning (protects existing setups).
-o=$( cd "$W" && env CONCORD_DIR="$COORD" HOME="$W/home" "$BIN" status 2>&1 )
-chk "legacy CONCORD_DIR still honored" "$o" "$COORD"
-chk "legacy CONCORD_DIR warns (deprecated)" "$o" "deprecated"
+# F-config: legacy location env is IGNORED (no ambient authority). With a bogus CONCORD_DIR
+# set, the binary still resolves by CONVENTION (cwd=$PROJ → $COORD) and never reads the env.
+o=$( cd "$PROJ" && env CONCORD_DIR="$W/BOGUS-coord" HOME="$W/home" "$BIN" paths 2>&1 )
+# Convention resolves the coord as <proj>-coord (suffix-checked; macOS canonicalizes
+# /var → /private/var, so don't compare the full prefix). The bogus env must not appear.
+chk "legacy CONCORD_DIR is ignored — convention resolves <proj>-coord" "$o" "proj-coord"
+[ "${o#*BOGUS}" = "$o" ] && echo "✓ bogus CONCORD_DIR absent from resolved paths" || { echo "✗ bogus env leaked"; fail=1; }
 
 echo ""
-if [ "$fail" = 0 ]; then echo "CONFIG: ALL PASS — sample config, overrides take effect, strict, malformed-safe, --coord, legacy-env honored+warned"; else echo "CONFIG: FAILURES"; fi
+if [ "$fail" = 0 ]; then echo "CONFIG: ALL PASS — sample config, overrides take effect, strict, malformed-safe, --coord, legacy-env ignored"; else echo "CONFIG: FAILURES"; fi
 exit $fail

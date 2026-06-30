@@ -1,16 +1,16 @@
-//! Resolution of the coordination directory and prose channel, byte-compatible with
-//! `bin/coord.sh`. This is what makes the Rust binary a *drop-in*: run in the same
-//! repo with the same environment, it reads and writes the exact same locations.
+//! Resolution of the coordination directory and prose channel by **convention** — there
+//! is no ambient location authority (F-config). From the git toplevel `_top`, everything
+//! is derived structurally; the only inputs are the explicit `--coord`/`--project`
+//! overrides (see [`Overrides`]).
 //!
-//! Shell logic mirrored (coord.sh:27-34):
 //! ```text
 //!   _top     = git rev-parse --show-toplevel   (fallback: cwd)
-//!   COORD    = $CONCORD_DIR : $AIS_COORD_DIR : <dirname _top>/<basename _top>-coord
+//!   COORD    = --coord : <dirname _top>/<basename _top>-coord
 //!   SESSIONS = $COORD/sessions
 //!   LEASES   = $COORD/leases
 //!   LOG      = $COORD/intents.jsonl
-//!   SYNC     = $CONCORD_SYNC : $AIS_SYNC_FILE : <dirname _top>/<basename _top>-SESSION-SYNC.md
-//!   TTL      = $AIS_COORD_TTL : 1800
+//!   SYNC     = <dirname _top>/<basename _top>-SESSION-SYNC.md
+//!   TTL      = config.leases.stale_ttl : 1800
 //! ```
 
 use std::env;
@@ -49,17 +49,17 @@ pub struct Paths {
     pub merge_lock: PathBuf,
     /// The prose channel (`<repo>-SESSION-SYNC.md` by default).
     pub sync: PathBuf,
-    /// The project root this coordination state belongs to (`CONCORD_PROJECT` env, or
+    /// The project root this coordination state belongs to (the `--project` override, or
     /// the git toplevel). Surfaced by `concord paths` for multi-project tooling.
     pub project: PathBuf,
     /// Stale window in seconds.
     pub ttl: u64,
 }
 
-/// Bootstrap overrides for [`Paths::resolve_with`] — the two values config cannot define
+/// Bootstrap overrides for [`Paths::resolve_with`] — the values config cannot define
 /// (they locate the config itself). Each is `None` to fall back to the git-toplevel
-/// convention. The binary computes these from `--coord`/`--project` flags, the user-global
-/// `[projects]` map, or (deprecated, with a warning) a legacy env var.
+/// convention. The binary computes these from the explicit `--coord`/`--project` flags
+/// or the user-global `[projects]` map — never from the ambient environment (F-config).
 #[derive(Debug, Clone, Default)]
 pub struct Overrides {
     pub coord: Option<PathBuf>,
